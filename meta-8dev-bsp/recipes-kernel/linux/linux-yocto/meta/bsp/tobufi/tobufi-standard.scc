@@ -5,3 +5,5 @@ define KARCH arm64
 define KMETA_EXTERNAL_BSP t
 
 kconf hardware tobufi-standard.cfg
+
+patch enable-qcom-gdsc-for-qcs404-gcc.patch

@@ -1,0 +1,29 @@
+From c2e486e976638c7799e1ab350cf56bc3a37f10f8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Edvinas=20Stun=C5=BE=C4=97nas?= <edvinas@8devices.com>
+Date: Fri, 15 Nov 2024 23:47:32 +0000
+Subject: [PATCH] clk: qcom: auto enable QCOM_GDSC for QCS40x GCC
+
+The QCS_GCC_404 should depend on QCOM_GDSC to ensure proper clock
+controller operation. Without GDSC SoC peripherals won't start.
+
+Upstream-Status: Pending
+Signed-off-by: Edvinas Stunžėnas <edvinas@8devices.com>
+---
+ drivers/clk/qcom/Kconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/clk/qcom/Kconfig b/drivers/clk/qcom/Kconfig
+index a79b83758389..11247ce09682 100644
+--- a/drivers/clk/qcom/Kconfig
++++ b/drivers/clk/qcom/Kconfig
+@@ -402,6 +402,7 @@ config QCM_DISPCC_2290
+ 
+ config QCS_GCC_404
+ 	tristate "QCS404 Global Clock Controller"
++	select QCOM_GDSC
+ 	help
+ 	  Support for the global clock controller on QCS404 devices.
+ 	  Say Y if you want to use multimedia devices or peripheral
+-- 
+2.25.1
+
