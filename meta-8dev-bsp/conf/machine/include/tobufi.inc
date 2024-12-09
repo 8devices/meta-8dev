@@ -25,4 +25,6 @@ PREFERRED_VERSION_linux-yocto ?= "6.6%"
 
 MACHINE_EXTRA_RRECOMMENDS += " \
     kernel-modules \
+    linux-firmware-ath10k \
+    linux-firmware-ath11k \
 "
