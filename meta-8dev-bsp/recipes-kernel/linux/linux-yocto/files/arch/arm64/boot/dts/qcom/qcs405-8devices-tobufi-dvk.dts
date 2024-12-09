@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2025 8Devices UAB
+ */
+
+/dts-v1/;
+
+#include "qcs405-8devices-tobufi.dtsi"
+
+/ {
+	model = "8devices TobuFi DVK";
+	compatible = "8devices,tobufi-dvk", "8devices,tobufi",
+		     "qcom,qcs405";
+	qcom,board-id = <0x20 0x0>;
+	qcom,msm-id = <352 0x10001>;
+};
+
+&tlmm {
+	ethernet_default: ethernet-default-state {
+		mdc-pins {
+			pins = "gpio76";
+			function = "rgmii_mdc";
+			bias-pull-up;
+		};
+
+		mdio-pins {
+			pins = "gpio75";
+			function = "rgmii_mdio";
+			bias-pull-up;
+		};
+
+		phy-rst-pins {
+			pins = "gpio104";
+			function = "gpio";
+			bias-disable;
+			drive-strength = <2>;
+			output-low;
+		};
+
+		rx-ck-pins {
+			pins = "gpio69";
+			function = "rgmii_ck";
+			bias-disable;
+			drive-strength = <2>;
+		};
+
+		rx-ctl-pins {
+			pins = "gpio74";
+			function = "rgmii_ctl";
+			bias-disable;
+			drive-strength = <2>;
+		};
+
+		rx-pins {
+			pins = "gpio73", "gpio72", "gpio71", "gpio70";
+			function = "rgmii_rx";
+			bias-disable;
+			drive-strength = <2>;
+		};
+
+		tx-ck-pins {
+			pins = "gpio63";
+			function = "rgmii_ck";
+			bias-pull-up;
+			drive-strength = <16>;
+		};
+
+		tx-ctl-pins {
+			pins = "gpio68";
+			function = "rgmii_ctl";
+			bias-pull-up;
+			drive-strength = <16>;
+		};
+
+		tx-pins {
+			pins = "gpio67", "gpio66", "gpio65", "gpio64";
+			function = "rgmii_tx";
+			bias-pull-up;
+			drive-strength = <16>;
+		};
+	};
+};
+
+&ethernet {
+	snps,reset-gpio = <&tlmm 104 GPIO_ACTIVE_LOW>;
+	snps,reset-active-low;
+	snps,reset-delays-us = <0 10000 10000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&ethernet_default>;
+	phy-handle = <&phy0>;
+	phy-mode = "rgmii";
+	status = "okay";
+
+	mdio {
+		compatible = "snps,dwmac-mdio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		phy0: phy@0 {
+			compatible = "ethernet-phy-ieee802.3-c22";
+			reg = <0x0>;
+			device_type = "ethernet-phy";
+		};
+	};
+};
+
+&sdcc2 {
+	cd-gpios = <&tlmm 36 GPIO_ACTIVE_LOW>;
+	status = "okay";
+};
+
+&sdc2_default {
+	cd-pins {
+		pins = "gpio36";
+		function = "gpio";
+		bias-disable;
+		drive-strength = <2>;
+	};
+};
+
+&sdc2_sleep {
+	cd-pins {
+		pins = "gpio36";
+		function = "gpio";
+		bias-disable;
+		drive-strength = <2>;
+	};
+};

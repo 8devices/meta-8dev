@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+define KMACHINE tobufi
+define KTYPE standard
+define KARCH arm64
+define KMETA_EXTERNAL_BSP t
+
+kconf hardware tobufi-standard.cfg

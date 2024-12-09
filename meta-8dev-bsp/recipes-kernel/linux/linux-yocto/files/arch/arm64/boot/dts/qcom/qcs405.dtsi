@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2025 8Devices UAB
+ */
+
+#include "qcs404.dtsi"
+
+&soc {
+	sdcc2: mmc@7844000 {
+		compatible = "qcom,qcs404-sdhci", "qcom,sdhci-msm-v5";
+		reg = <0x7844000 0x1000>;
+		reg-names = "hc";
+
+		interrupts = <GIC_SPI 125 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 221 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "hc_irq", "pwr_irq";
+
+		clocks = <&gcc GCC_SDCC2_AHB_CLK>,
+			 <&gcc GCC_SDCC2_APPS_CLK>,
+			 <&xo_board>;
+		clock-names = "iface", "core", "xo";
+
+		status = "disabled";
+	};
+};
