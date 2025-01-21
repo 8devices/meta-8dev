@@ -28,3 +28,5 @@ MACHINE_EXTRA_RRECOMMENDS += " \
     linux-firmware-ath10k \
     linux-firmware-ath11k \
 "
+
+EXTRA_IMAGEDEPENDS += "flashtools"
