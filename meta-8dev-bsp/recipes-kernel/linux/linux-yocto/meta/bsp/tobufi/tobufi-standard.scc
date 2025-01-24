@@ -7,3 +7,4 @@ define KMETA_EXTERNAL_BSP t
 kconf hardware tobufi-standard.cfg
 
 patch enable-qcom-gdsc-for-qcs404-gcc.patch
+patch update-reset-reason-shift-for-pms405-pon.patch
