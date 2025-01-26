@@ -1,0 +1,207 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2025 8Devices UAB
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/leds/common.h>
+#include "qcs405-8devices-tobufi.dtsi"
+
+/ {
+	model = "8devices Robonode";
+	compatible = "8devices,robonode", "8devices,tobufi",
+		     "qcom,qcs405";
+	qcom,board-id = <0x20 0x0>;
+	qcom,msm-id = <352 0x10001>;
+
+	/* Aliases defines TTY character devices mapping in linux.
+	 * I.e. serial0 stands for ttyMSM0, etc. */
+        aliases {
+                serial0 = &blsp1_uart2;
+                serial1 = &blsp1_uart0;
+                serial2 = &blsp1_uart1;
+                serial3 = &blsp2_uart0;
+        };
+};
+
+&tlmm {
+	ethernet_default: ethernet-default-state {
+		mdc-pins {
+			pins = "gpio76";
+			function = "rgmii_mdc";
+			bias-pull-up;
+		};
+
+		mdio-pins {
+			pins = "gpio75";
+			function = "rgmii_mdio";
+			bias-pull-up;
+		};
+
+		phy-rst-pins {
+			pins = "gpio104";
+			function = "gpio";
+			bias-disable;
+			drive-strength = <2>;
+			output-low;
+		};
+
+		phy-intr-pins {
+			pins = "gpio105";
+			function = "rgmii_int";
+			bias-pull-up;
+			drive-strength = <2>;
+		};
+
+		rx-ck-pins {
+			pins = "gpio69";
+			function = "rgmii_ck";
+			bias-disable;
+			drive-strength = <2>;
+		};
+
+		rx-ctl-pins {
+			pins = "gpio74";
+			function = "rgmii_ctl";
+			bias-disable;
+			drive-strength = <2>;
+		};
+
+		rx-pins {
+			pins = "gpio73", "gpio72", "gpio71", "gpio70";
+			function = "rgmii_rx";
+			bias-disable;
+			drive-strength = <2>;
+		};
+
+		tx-ck-pins {
+			pins = "gpio63";
+			function = "rgmii_ck";
+			bias-pull-up;
+			drive-strength = <16>;
+		};
+
+		tx-ctl-pins {
+			pins = "gpio68";
+			function = "rgmii_ctl";
+			bias-pull-up;
+			drive-strength = <16>;
+		};
+
+		tx-pins {
+			pins = "gpio67", "gpio66", "gpio65", "gpio64";
+			function = "rgmii_tx";
+			bias-pull-up;
+			drive-strength = <16>;
+		};
+	};
+
+	gpio_leds: gpio-leds-pins {
+		pins = "gpio47", "gpio48", "gpio52";
+		function = "gpio";
+		bias-pull-down;
+		drive-strength = <8>;
+	};
+
+	gpio_keys: gpio-keys-pins {
+		pins = "gpio51", "gpio58";
+		function = "gpio";
+		bias-disable;
+		drive-strength = <2>;
+		input-enable;
+	};
+};
+
+&soc {
+	gpio-leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio_leds>;
+
+		led@47 {
+			label = "led0";
+			gpios = <&tlmm 47 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "default-on";
+		};
+
+		led@48 {
+			label = "led1";
+			gpios = <&tlmm 48 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "default-on";
+		};
+
+		led@52 {
+			label = "led2";
+			gpios = <&tlmm 52 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "default-on";
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&gpio_keys>;
+		pinctrl-names = "default";
+
+		push@58 {
+			label = "Push Button";
+			linux,code = <BTN_0>;
+			gpios = <&tlmm 58 GPIO_ACTIVE_LOW>;
+		};
+
+		slide@51 {
+			label = "Slide Switch";
+			linux,code = <BTN_1>;
+			gpios = <&tlmm 51 GPIO_ACTIVE_HIGH>;
+		};
+	};
+};
+
+&ethernet {
+	snps,reset-gpio = <&tlmm 104 GPIO_ACTIVE_LOW>;
+	snps,reset-active-low;
+	snps,reset-delays-us = <0 10000 10000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&ethernet_default>;
+	phy-handle = <&phy0>;
+	phy-mode = "rgmii";
+	status = "okay";
+
+	mdio {
+		compatible = "snps,dwmac-mdio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		phy0: phy@0 {
+			compatible = "ethernet-phy-ieee802.3-c22";
+			reg = <0x0>;
+			device_type = "ethernet-phy";
+		};
+	};
+};
+
+&blsp1_uart0 {
+	status = "okay";
+};
+
+&blsp1_uart1 {
+	status = "okay";
+};
+
+&blsp1_i2c1 {
+	status = "okay";
+};
+
+&blsp1_i2c2 {
+	status = "okay";
+};
+
+&blsp2_dma {
+	qcom,controlled-remotely;
+	status = "okay";
+};
+
+&blsp2_uart0 {
+	status = "okay";
+};
