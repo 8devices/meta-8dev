@@ -1,0 +1,64 @@
+#!/bin/sh
+DAEMON=/usr/sbin/hostapd
+NAME=wpa_supplicant
+DESC="WPA Supplicant Daemon"
+IFACE="${2:-wlan0}"
+PIDFILE="/run/wpa_supplicant/$IFACE.pid"
+ARGS="-B -P $PIDFILE -i $IFACE -c /etc/wpa_supplicant/$IFACE.conf"
+
+test -f $DAEMON || exit 0
+
+set -e
+
+
+# source function library
+. /etc/init.d/functions
+
+delay_stop() {
+	count=0
+	while [ $count -lt 9 ] ; do
+	        if pidof $DAEMON >/dev/null; then
+	                sleep 1
+	        else
+	                return 0
+	        fi
+		count=`expr $count + 1`
+	done
+	echo "Failed to stop $DESC."
+	return 1
+}
+
+case "$1" in
+    start)
+	[ -d "/sys/class/net/$IFACE/wireless" ] || exit 1
+	echo -n "Starting $DESC: "
+	start-stop-daemon -S --pidfile $PIDFILE -x $DAEMON -- $ARGS
+	echo "$NAME."
+	;;
+    stop)
+	[ -d "/sys/class/net/$IFACE/wireless" ] || exit 1
+	echo -n "Stopping $DESC: "
+	start-stop-daemon -K --oknodo --pidfile $PIDFILE
+	echo "$NAME."
+	;;
+    restart)
+	[ -d "/sys/class/net/$IFACE/wireless" ] || exit 1
+	$0 stop $2
+	delay_stop && $0 start $2
+	;;
+    reload)
+	echo -n "Reloading $DESC: "
+	killall -HUP $(basename ${DAEMON})
+	echo "$NAME."
+	;;
+    status)
+	status $DAEMON
+	exit $?
+	;;
+    *)
+	echo "Usage: $0 {start|stop|restart|reload|status} [iface]"
+	exit 1
+	;;
+esac
+
+exit 0

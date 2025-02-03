@@ -1,0 +1,15 @@
+[Unit]
+Description=hostapd on VAP %i
+Conflicts=wpa_supplicant@%i.service
+
+[Service]
+Restart=on-failure
+RestartSec=5
+# XXX: delay hostapd service startup to avoid workaround driver
+# VAP init and service races. Without delay VAP init fails and
+# stays in no carrier state until hostapd is restarted
+ExecStartPre=-sleep 1
+ExecStart=hostapd -P /run/hostapd-%i.pid /etc/hostapd/%i.conf
+
+[Install]
+WantedBy=network.target

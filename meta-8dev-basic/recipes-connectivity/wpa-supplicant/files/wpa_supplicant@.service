@@ -1,0 +1,15 @@
+[Unit]
+Description=wpa_supplicant on VAP %i
+Conflicts=hostapd@%i.service
+
+[Service]
+Restart=on-failure
+RestartSec=5
+# XXX: delay wpa_supplicant service startup to avoid hypothetical
+# VAP init and service races. This is just-in-case fix similar to
+# one done for hostapd.
+ExecStartPre=-sleep 1
+ExecStart=wpa_supplicant -i %i -P /run/wpa_supplicant-%i.pid -c /etc/wpa_supplicant/%i.conf
+
+[Install]
+WantedBy=network.target
