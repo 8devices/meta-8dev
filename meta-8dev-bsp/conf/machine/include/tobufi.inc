@@ -30,3 +30,6 @@ MACHINE_EXTRA_RRECOMMENDS += " \
 "
 
 EXTRA_IMAGEDEPENDS += "flashtools"
+
+# Exclude linux kernel from rootfs
+RRECOMMENDS:${KERNEL_PACKAGE_NAME}-base = ""
