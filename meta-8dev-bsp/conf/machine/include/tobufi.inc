@@ -29,6 +29,11 @@ MACHINE_EXTRA_RRECOMMENDS += " \
     linux-firmware-ath11k \
 "
 
+# Enable custom reboot-mode for non-systemd
+MACHINE_EXTRA_RRECOMMENDS += "\
+    ${@bb.utils.contains('INIT_MANAGER', 'systemd', '', 'reboot-mode', d)} \
+"
+
 EXTRA_IMAGEDEPENDS += "flashtools"
 
 # Exclude linux kernel from rootfs
