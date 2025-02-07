@@ -123,6 +123,12 @@
 			regulator-max-microvolt = <1160000>;
 		};
 
+		vreg_l4_1p2: l4 {
+			regulator-name = "+VREG_L4_1P2";
+			regulator-min-microvolt = <1144000>;
+			regulator-max-microvolt = <1256000>;
+		};
+
 		vreg_l5_1p8: l5 {
 			regulator-name = "+VREG_L5_1P8";
 			regulator-min-microvolt = <1800000>;
@@ -134,6 +140,13 @@
 			/* datasheet spec 1.800 - 3.304 V */
 			regulator-min-microvolt = <2952000>;
 			regulator-max-microvolt = <3050000>;
+		};
+
+		vreg_l12_3p3: l12 {
+			regulator-name = "+VREG_L12_3P3";
+			/* datasheet spec 2.968 - 3.300 V */
+			regulator-min-microvolt = <3050000>;
+			regulator-max-microvolt = <3300000>;
 		};
 	};
 };

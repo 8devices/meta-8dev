@@ -13,6 +13,12 @@
 		     "qcom,qcs405";
 	qcom,board-id = <0x20 0x0>;
 	qcom,msm-id = <352 0x10001>;
+
+	usb3_extcon: usb3-extcon {
+		compatible = "linux,extcon-usb-gpio";
+		id-gpio = <&tlmm 116 GPIO_ACTIVE_HIGH>;
+		vbus-out-gpio = <&tlmm 81 GPIO_ACTIVE_LOW>;
+	};
 };
 
 &tlmm {
@@ -79,6 +85,27 @@
 			drive-strength = <16>;
 		};
 	};
+
+	usb3_id_pin: usb3-id-state {
+		pins = "gpio116";
+		function = "gpio";
+		bias-pull-up;
+		drive-strength = <2>;
+	};
+
+	usb3_vbus_boost: usb3-vbus-boost {
+		pins = "gpio81";
+		function = "gpio";
+		bias-pull-up;
+		drive-strength = <8>;
+	};
+
+	usb2_vbus_boost: usb2-vbus-boost {
+		pins = "gpio80";
+		function = "gpio";
+		bias-pull-down;
+		drive-strength = <8>;
+	};
 };
 
 &ethernet {
@@ -125,4 +152,39 @@
 		bias-disable;
 		drive-strength = <2>;
 	};
+};
+
+&usb2 {
+	status = "okay";
+	usb@78c0000 {
+		dr_mode = "peripheral";
+	};
+};
+
+&usb3 {
+	status = "okay";
+	usb@7580000 {
+		dr_mode = "otg";
+		extcon = <&usb3_extcon>;
+	};
+};
+
+&usb2_phy_prim {
+	vdd-supply = <&vreg_l4_1p2>;
+	vdda1p8-supply = <&vreg_l5_1p8>;
+	vdda3p3-supply = <&vreg_l12_3p3>;
+	status = "okay";
+};
+
+&usb2_phy_sec {
+	vdd-supply = <&vreg_l4_1p2>;
+	vdda1p8-supply = <&vreg_l5_1p8>;
+	vdda3p3-supply = <&vreg_l12_3p3>;
+	status = "okay";
+};
+
+&usb3_phy {
+	vdd-supply = <&vreg_l3_1p05>;
+	vdda1p8-supply = <&vreg_l5_1p8>;
+	status = "okay";
 };
