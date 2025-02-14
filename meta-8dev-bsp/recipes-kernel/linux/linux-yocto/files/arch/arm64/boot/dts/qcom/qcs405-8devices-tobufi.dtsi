@@ -334,5 +334,6 @@
 };
 
 &remoteproc_wcss {
+	firmware-name = "ath10k/WCN3990/hw1.0/qdsp6sw.mbn";
 	status = "okay";
 };
