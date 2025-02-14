@@ -1,0 +1,20 @@
+[
+    {
+        "board": [
+            {
+                "names": [
+                    "bus=pci,qmi-chip-id=0,qmi-board-id=255,variant=2"
+                ],
+                "data": "bdwlan.bin.pine2g"
+            },
+            {
+                "names": [
+                    "bus=pci,qmi-chip-id=0,qmi-board-id=255",
+                    "bus=pci,qmi-chip-id=0,qmi-board-id=255,variant=5"
+                ],
+                "data": "bdwlan.bin.pine5g"
+            }
+        ],
+        "regdb": []
+    }
+]
