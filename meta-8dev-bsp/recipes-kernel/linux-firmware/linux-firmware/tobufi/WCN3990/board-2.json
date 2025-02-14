@@ -1,0 +1,8 @@
+[
+    {
+        "names": [
+            "bus=snoc,qmi-board-id=ff,qmi-chip-id=140"
+        ],
+        "data": "bdwlan.105"
+    }
+]
