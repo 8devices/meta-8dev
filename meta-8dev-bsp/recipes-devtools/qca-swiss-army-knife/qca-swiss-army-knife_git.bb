@@ -10,7 +10,7 @@ PV = "0.0+${SRCPV}"
 SRC_URI = "\
     git://github.com/qca/${BPN}.git;branch=master;protocol=https \
 "
-SRCREV = "583eed7e66c661fe240189dd21c8f1eeb666c576"
+SRCREV = "3349c9cfbd7e937578967ab0bca70b36e6534be3"
 
 S = "${WORKDIR}/git"
 
