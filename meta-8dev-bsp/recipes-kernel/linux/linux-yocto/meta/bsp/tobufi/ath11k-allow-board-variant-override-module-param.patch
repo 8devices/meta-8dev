@@ -1,0 +1,46 @@
+From 0d6cce35583b0a0be73f08a388662b58c27f92b7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Edvinas=20Stun=C5=BE=C4=97nas?= <edvinas@8devices.com>
+Date: Sat, 15 Feb 2025 20:10:47 +0000
+Subject: [PATCH] ath11k: allow board variant override module param
+
+Radio band on TobyFi/Pine (QCN9074) radio is controlled using
+board data change and driver reinitialisation. Such board data
+variant selection/enforcement via module params makes possible
+to encode multiple board datas for same radio and perform the
+switch without making changes in FS.
+
+Upstream-Status: Inappropriate [embedded specific]
+Signed-off-by: Edvinas Stunžėnas <edvinas@8devices.com>
+---
+ drivers/net/wireless/ath/ath11k/core.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath11k/core.c b/drivers/net/wireless/ath/ath11k/core.c
+index fc7c4564a715..f13fb3736b4c 100644
+--- a/drivers/net/wireless/ath/ath11k/core.c
++++ b/drivers/net/wireless/ath/ath11k/core.c
+@@ -36,6 +36,10 @@ bool ath11k_ftm_mode;
+ module_param_named(ftm_mode, ath11k_ftm_mode, bool, 0444);
+ MODULE_PARM_DESC(ftm_mode, "Boots up in factory test mode");
+ 
++static unsigned int ath11k_bdf_variant;
++module_param_named(bdf_variant, ath11k_bdf_variant, uint, 0644);
++MODULE_PARM_DESC(bdf_variant, "Force board variant");
++
+ static const struct ath11k_hw_params ath11k_hw_params[] = {
+ 	{
+ 		.hw_rev = ATH11K_HW_IPQ8074,
+@@ -992,6 +996,10 @@ static int __ath11k_core_create_board_name(struct ath11k_base *ab, char *name,
+ 	/* strlen(',variant=') + strlen(ab->qmi.target.bdf_ext) */
+ 	char variant[9 + ATH11K_QMI_BDF_EXT_STR_LENGTH] = { 0 };
+ 
++	if (with_variant && ath11k_bdf_variant)
++		scnprintf(variant, sizeof(variant), ",variant=%u",
++			  ath11k_bdf_variant);
++	else
+ 	if (with_variant && ab->qmi.target.bdf_ext[0] != '\0')
+ 		scnprintf(variant, sizeof(variant), ",variant=%s",
+ 			  ab->qmi.target.bdf_ext);
+-- 
+2.25.1
+
