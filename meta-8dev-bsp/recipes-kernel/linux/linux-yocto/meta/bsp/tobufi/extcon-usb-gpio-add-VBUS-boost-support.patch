@@ -1,0 +1,85 @@
+From 4f8d32a7c30f6af095ba99a60dd182ec5363985f Mon Sep 17 00:00:00 2001
+From: Jack Pham <jackp@codeaurora.org>
+Date: Fri, 16 Mar 2018 14:03:52 -0700
+Subject: [PATCH] extcon: usb-gpio: Add support for optional VBUS output enable
+ GPIO
+
+On many platforms 5V VBUS output can be provided by external
+circuitry and turned on via GPIO. For convenience, on micro-AB
+ports this can be done in conjunction when ID pin becomes low
+meaning USB_HOST mode is to be entered. Add support for an
+optional "vbus-out" GPIO to this driver.
+
+Upstream-Status: Inappropriate [QCOM OS specific]
+
+Change-Id: Id58e5dca5375b8140c75ce7cd6769dd8a31a2af7
+Signed-off-by: Jack Pham <jackp@codeaurora.org>
+---
+ .../devicetree/bindings/extcon/extcon-usb-gpio.txt  |  3 +++
+ drivers/extcon/extcon-usb-gpio.c                    | 13 ++++++++++++-
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/extcon/extcon-usb-gpio.txt b/Documentation/devicetree/bindings/extcon/extcon-usb-gpio.txt
+index dfc14f71e81f..1e904ca94538 100644
+--- a/Documentation/devicetree/bindings/extcon/extcon-usb-gpio.txt
++++ b/Documentation/devicetree/bindings/extcon/extcon-usb-gpio.txt
+@@ -10,6 +10,9 @@ Either one of id-gpio or vbus-gpio must be present. Both can be present as well.
+ - id-gpio: gpio for USB ID pin. See gpio binding.
+ - vbus-gpio: gpio for USB VBUS pin.
+ 
++Optional properties:
++- vbus-out-gpio: gpio for enabling VBUS output (e.g. when entering host mode)
++
+ Example: Examples of extcon-usb-gpio node in dra7-evm.dts as listed below:
+ 	extcon_usb1 {
+ 		compatible = "linux,extcon-usb-gpio";
+diff --git a/drivers/extcon/extcon-usb-gpio.c b/drivers/extcon/extcon-usb-gpio.c
+index 40d967a11e87..fd15e752b18a 100644
+--- a/drivers/extcon/extcon-usb-gpio.c
++++ b/drivers/extcon/extcon-usb-gpio.c
+@@ -27,6 +27,7 @@ struct usb_extcon_info {
+ 
+ 	struct gpio_desc *id_gpiod;
+ 	struct gpio_desc *vbus_gpiod;
++	struct gpio_desc *vbus_out_gpiod;
+ 	int id_irq;
+ 	int vbus_irq;
+ 
+@@ -71,12 +72,17 @@ static void usb_extcon_detect_cable(struct work_struct *work)
+ 		gpiod_get_value_cansleep(info->vbus_gpiod) : id;
+ 
+ 	/* at first we clean states which are no longer active */
+-	if (id)
++	if (id) {
++		if (info->vbus_out_gpiod)
++			gpiod_set_value_cansleep(info->vbus_out_gpiod, 0);
+ 		extcon_set_state_sync(info->edev, EXTCON_USB_HOST, false);
++	}
+ 	if (!vbus)
+ 		extcon_set_state_sync(info->edev, EXTCON_USB, false);
+ 
+ 	if (!id) {
++		if (info->vbus_out_gpiod)
++			gpiod_set_value_cansleep(info->vbus_out_gpiod, 1);
+ 		extcon_set_state_sync(info->edev, EXTCON_USB_HOST, true);
+ 	} else {
+ 		if (vbus)
+@@ -112,6 +118,8 @@ static int usb_extcon_probe(struct platform_device *pdev)
+ 	info->id_gpiod = devm_gpiod_get_optional(&pdev->dev, "id", GPIOD_IN);
+ 	info->vbus_gpiod = devm_gpiod_get_optional(&pdev->dev, "vbus",
+ 						   GPIOD_IN);
++	info->vbus_out_gpiod = devm_gpiod_get_optional(&pdev->dev, "vbus-out",
++						   GPIOD_OUT_HIGH);
+ 
+ 	if (!info->id_gpiod && !info->vbus_gpiod) {
+ 		dev_err(dev, "failed to get gpios\n");
+@@ -124,6 +132,9 @@ static int usb_extcon_probe(struct platform_device *pdev)
+ 	if (IS_ERR(info->vbus_gpiod))
+ 		return PTR_ERR(info->vbus_gpiod);
+ 
++	if (IS_ERR(info->vbus_out_gpiod))
++		return PTR_ERR(info->vbus_out_gpiod);
++
+ 	info->edev = devm_extcon_dev_allocate(dev, usb_extcon_cable);
+ 	if (IS_ERR(info->edev)) {
+ 		dev_err(dev, "failed to allocate extcon device\n");
