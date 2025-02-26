@@ -1,0 +1,30 @@
+From a1d75af7ed4fe088870a65ef8232a621fef23754 Mon Sep 17 00:00:00 2001
+From: Aurimas Matelis <aurimas.m@8devices.com>
+Date: Thu, 27 Feb 2025 16:39:02 +0200
+Subject: [PATCH] linux-arm64: undefine HAVE_ANDROID_OS
+
+When using 0001-adb-services-fix-android_reboot.patch, it is ignored due
+to this macro being enabled even though there is no Android detection.
+Disable the macro to avoid future issues.
+
+Upstream-Status: Inappropriate [distro-specific hack]
+---
+ core/combo/include/arch/linux-arm64/AndroidConfig.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/core/combo/include/arch/linux-arm64/AndroidConfig.h b/core/combo/include/arch/linux-arm64/AndroidConfig.h
+index bcbda8f87f..2c4270f59d 100644
+--- a/core/combo/include/arch/linux-arm64/AndroidConfig.h
++++ b/core/combo/include/arch/linux-arm64/AndroidConfig.h
+@@ -199,7 +199,7 @@
+ /*
+  * Define if we're running on *our* linux on device or emulator.
+  */
+-#define HAVE_ANDROID_OS 1
++/* #define HAVE_ANDROID_OS 1 */
+ 
+ /*
+  * Define if we have Linux-style non-filesystem Unix Domain Sockets
+-- 
+2.25.1
+

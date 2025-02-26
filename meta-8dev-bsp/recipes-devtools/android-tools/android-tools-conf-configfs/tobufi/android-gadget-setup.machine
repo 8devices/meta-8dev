@@ -1,0 +1,4 @@
+manufacturer=8devices
+serial="$(cat /proc/cmdline | sed 's/.*androidboot.serialno=//' | sed 's/ .*//')"
+model=TobuFi
+usb_addr="78c0000.usb"

@@ -1,0 +1,49 @@
+From 5d5c3ce58005214518d6db93ad7490f6108b3763 Mon Sep 17 00:00:00 2001
+From: Aurimas Matelis <aurimas.m@8devices.com>
+Date: Thu, 27 Feb 2025 18:24:45 +0200
+Subject: [PATCH] adb/services: fix android_reboot
+
+In non-Android systems, there is no properties to set reboot options
+into, so use direct syscall to handle reboot command.
+
+Upstream-Status: Inappropriate [distro-specific hack]
+---
+ adb/services.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/adb/services.c b/adb/services.c
+index d44b0c5068..c1e63892a9 100644
+--- a/adb/services.c
++++ b/adb/services.c
+@@ -20,6 +20,8 @@
+ #include <unistd.h>
+ #include <string.h>
+ #include <errno.h>
++#include <syscall.h>
++#include <linux/reboot.h>
+ 
+ #include "sysdeps.h"
+ 
+@@ -127,12 +129,19 @@ void reboot_service(int fd, void *arg)
+         goto cleanup;
+     }
+ 
++#ifndef HAVE_ANDROID_OS
++    if (strlen((char *) arg))
++	ret = syscall(__NR_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2, LINUX_REBOOT_CMD_RESTART2, arg);
++    else
++	ret = syscall(__NR_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2, LINUX_REBOOT_CMD_RESTART, NULL);
++#else
+     ret = property_set(ANDROID_RB_PROPERTY, property_val);
+     if (ret < 0) {
+         snprintf(buf, sizeof(buf), "reboot failed: %d\n", ret);
+         writex(fd, buf, strlen(buf));
+         goto cleanup;
+     }
++#endif
+     // Don't return early. Give the reboot command time to take effect
+     // to avoid messing up scripts which do "adb reboot && adb wait-for-device"
+     while(1) { pause(); }
+-- 
+2.25.1
+

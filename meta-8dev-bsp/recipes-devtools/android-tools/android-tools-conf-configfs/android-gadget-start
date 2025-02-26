@@ -1,0 +1,15 @@
+#!/bin/sh
+
+set -e
+
+usb_addr=$(ls /sys/class/udc/ | head -n 1)
+
+if [ -r /etc/android-gadget-setup.machine ] ; then
+	. /etc/android-gadget-setup.machine
+fi
+
+sleep 10
+
+echo -n "$usb_addr" > /sys/kernel/config/usb_gadget/adb/UDC
+
+echo "Setting UDC $usb_addr for USB ADB Gadget usage"
