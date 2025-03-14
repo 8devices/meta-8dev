@@ -1,0 +1,111 @@
+From 4d0a3a79a11a8fa8456021e5425c619256adac83 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Edvinas=20Stun=C5=BE=C4=97nas?= <edvinas@8devices.com>
+Date: Thu, 13 Mar 2025 16:03:18 +0000
+Subject: [PATCH] net: stmmac: qcom-ethqos: add MAC address override module
+ param
+
+Specifying MAC address in DTS is not feasible in most cases, also not
+all platforms supports or are eligible to keep and retrieve HW address
+from nvmem. Module parameter seems to be good alternative to specify
+MAC address and control it from user space.
+
+Upstream-Status: Inappropriate [embedded specific]
+Signed-off-by: Edvinas Stunžėnas <edvinas@8devices.com>
+---
+ drivers/net/ethernet/stmicro/stmmac/dwmac-qcom-ethqos.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-qcom-ethqos.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-qcom-ethqos.c
+index ded1bbda5266..a47d53a686a7 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-qcom-ethqos.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-qcom-ethqos.c
+@@ -121,6 +121,10 @@ struct qcom_ethqos {
+ 	bool needs_sgmii_loopback;
+ };
+ 
++static char *mac_addr;
++module_param(mac_addr, charp, 0644);
++MODULE_PARM_DESC(mac_addr, "Network device MAC address");
++
+ static int rgmii_readl(struct qcom_ethqos *ethqos, unsigned int offset)
+ {
+ 	return readl(ethqos->rgmii_base + offset);
+@@ -752,6 +756,7 @@ static int qcom_ethqos_probe(struct platform_device *pdev)
+ 	struct stmmac_resources stmmac_res;
+ 	struct device *dev = &pdev->dev;
+ 	struct qcom_ethqos *ethqos;
++	u8 maddr[ETH_ALEN];
+ 	int ret;
+ 
+ 	ret = stmmac_get_platform_resources(pdev, &stmmac_res);
+@@ -765,6 +770,9 @@ static int qcom_ethqos_probe(struct platform_device *pdev)
+ 				     "dt configuration failed\n");
+ 	}
+ 
++	if (mac_addr && mac_pton(mac_addr, maddr) && is_valid_ether_addr(maddr))
++		memcpy(stmmac_res.mac, maddr, sizeof(stmmac_res.mac));
++
+ 	plat_dat->clks_config = ethqos_clks_config;
+ 
+ 	ethqos = devm_kzalloc(dev, sizeof(*ethqos), GFP_KERNEL);
+-- 
+2.25.1
+
+
+From 9a762cc0c9cc225b87d33d5356797d8175edd808 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Edvinas=20Stun=C5=BE=C4=97nas?= <edvinas@8devices.com>
+Date: Fri, 14 Mar 2025 10:29:41 +0000
+Subject: [PATCH] wifi: ath10k: snoc: add MAC address override module param
+
+Specifying MAC address in DTS is not feasible in most cases, also not
+all platforms supports or are eligible to keep and retrieve HW address
+from nvmem. Module parameter seems to be good alternative to specify
+MAC address and control it from user space.
+---
+ drivers/net/wireless/ath/ath10k/snoc.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath10k/snoc.c b/drivers/net/wireless/ath/ath10k/snoc.c
+index 2c39bad7ebfb..89de81ab0d6c 100644
+--- a/drivers/net/wireless/ath/ath10k/snoc.c
++++ b/drivers/net/wireless/ath/ath10k/snoc.c
+@@ -7,6 +7,7 @@
+ #include <linux/clk.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
++#include <linux/etherdevice.h>
+ #include <linux/of.h>
+ #include <linux/of_device.h>
+ #include <linux/platform_device.h>
+@@ -471,6 +472,10 @@ static struct ce_service_to_pipe target_service_to_ce_map_wlan[] = {
+ 	},
+ };
+ 
++static char *mac_addr;
++module_param(mac_addr, charp, 0644);
++MODULE_PARM_DESC(mac_addr, "Network device MAC address");
++
+ static void ath10k_snoc_write32(struct ath10k *ar, u32 offset, u32 value)
+ {
+ 	struct ath10k_snoc *ar_snoc = ath10k_snoc_priv(ar);
+@@ -1713,6 +1718,7 @@ static int ath10k_snoc_probe(struct platform_device *pdev)
+ 	struct ath10k_snoc *ar_snoc;
+ 	struct device *dev;
+ 	struct ath10k *ar;
++	u8 maddr[ETH_ALEN];
+ 	u32 msa_size;
+ 	int ret;
+ 	u32 i;
+@@ -1745,6 +1751,9 @@ static int ath10k_snoc_probe(struct platform_device *pdev)
+ 	ar->ce_priv = &ar_snoc->ce;
+ 	msa_size = drv_data->msa_size;
+ 
++	if (mac_addr && mac_pton(mac_addr, maddr) && is_valid_ether_addr(maddr))
++		memcpy(ar->mac_addr, maddr, sizeof(ar->mac_addr));
++
+ 	ath10k_snoc_quirks_init(ar);
+ 
+ 	ret = ath10k_snoc_resource_init(ar);
+-- 
+2.25.1
+

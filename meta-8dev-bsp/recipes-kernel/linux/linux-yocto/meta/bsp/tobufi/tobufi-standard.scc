@@ -10,3 +10,4 @@ patch enable-qcom-gdsc-for-qcs404-gcc.patch
 patch update-reset-reason-shift-for-pms405-pon.patch
 patch ath11k-allow-board-variant-override-module-param.patch
 patch extcon-usb-gpio-add-VBUS-boost-support.patch
+patch allow-MAC-addr-override-via-module-params.patch
