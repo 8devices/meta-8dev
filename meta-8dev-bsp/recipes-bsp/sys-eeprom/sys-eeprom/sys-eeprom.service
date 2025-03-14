@@ -1,0 +1,12 @@
+[Unit]
+Description=System EEPROM board data dump
+DefaultDependencies=no
+Before=sysinit.target systemd-udevd.service systemd-modules-load.service
+ConditionPathIsDirectory=/sys
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sys-eeprom-dump
+
+[Install]
+WantedBy=sysinit.target
