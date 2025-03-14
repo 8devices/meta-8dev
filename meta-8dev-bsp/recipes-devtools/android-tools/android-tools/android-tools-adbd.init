@@ -1,0 +1,68 @@
+#!/bin/sh
+#
+# SPDX-License-Identifier: MIT
+#
+
+### BEGIN INIT INFO
+# Provides:          android-tools-adbd
+# Required-Start:    $local_fs $network
+# Required-Stop:     $local_fs $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Android Debug Bridge daemon
+# Description:       Starts the Android Debug Bridge daemon for USB debugging
+### END INIT INFO
+
+DAEMON=/usr/bin/adbd
+NAME=adbd
+DESC="Android Debug Bridge"
+
+[ -x "$DAEMON" ] || exit 0
+
+# Check if USB debugging is enabled
+[ -e /etc/usb-debugging-enabled ] || exit 0
+
+. /etc/init.d/functions
+
+case "$1" in
+	start)
+		echo "Starting $DESC: $NAME"
+
+		if [ -x /usr/bin/android-gadget-setup ]; then
+			/usr/bin/android-gadget-setup
+		fi
+
+		start-stop-daemon --start --quiet --background --exec $DAEMON
+
+		if [ -x /usr/bin/android-gadget-start ]; then
+			/usr/bin/android-gadget-start
+		fi
+		;;
+
+	stop)
+		echo "Stopping $DESC: $NAME"
+		start-stop-daemon --stop --quiet --exec $DAEMON
+
+		if [ -x /usr/bin/android-gadget-cleanup ]; then
+			/usr/bin/android-gadget-cleanup
+		fi
+		;;
+
+	restart|force-reload)
+		$0 stop
+		sleep 1
+		$0 start
+		;;
+
+	status)
+		status $DAEMON
+		exit $?
+		;;
+
+	*)
+		echo "Usage: $0 {start|stop|restart|force-reload|status}" >&2
+		exit 1
+		;;
+esac
+
+exit 0

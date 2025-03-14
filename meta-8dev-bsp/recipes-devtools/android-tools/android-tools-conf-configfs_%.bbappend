@@ -4,6 +4,7 @@ SRC_URI:append:tobufi = " \
 "
 
 do_install:append() {
-    # enable adbd immediately
-    touch ${D}/${sysconfdir}/usb-debugging-enabled
+    if ${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'false', 'true', d)}; then
+        rm -rf ${D}${systemd_unitdir}/system/android-tools-adbd.service.d
+    fi
 }
