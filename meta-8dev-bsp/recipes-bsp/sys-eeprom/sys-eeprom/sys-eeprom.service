@@ -2,6 +2,7 @@
 Description=System EEPROM board data dump
 DefaultDependencies=no
 Before=sysinit.target systemd-udevd.service systemd-modules-load.service
+After=systemd-remount-fs.service
 ConditionPathIsDirectory=/sys
 
 [Service]
