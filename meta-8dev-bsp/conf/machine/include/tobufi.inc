@@ -29,6 +29,7 @@ MACHINE_EXTRA_RRECOMMENDS += " \
     linux-firmware-ath10k \
     linux-firmware-ath11k \
     android-tools-adbd \
+    sys-eeprom \
 "
 
 # Enable custom reboot-mode for non-systemd
