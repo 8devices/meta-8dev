@@ -161,8 +161,8 @@ apply_hostap() {
 	
 	if [ "$BAND" = "2" ]; then
 		hostap_set hw_mode g
+		hostap_set ieee80211ac
 		[ "$PHY_DRIVER" = "ath11k" ] && hostap_set ieee80211ax 1
-		[ "$PHY_DRIVER" = "ath10k" ] && hostap_set ieee80211ac 
 		hostap_set vht_capab
 		hostap_set he_oper_chwidth
 		hostap_set he_oper_centr_freq_seg0_idx
@@ -170,8 +170,8 @@ apply_hostap() {
 		hostap_set vht_oper_centr_freq_seg0_idx
 	elif [ "$BAND" = "5" ]; then
 		hostap_set hw_mode a
+		hostap_set ieee80211ac 1
 		[ "$PHY_DRIVER" = "ath11k" ] && hostap_set ieee80211ax 1
-		[ "$PHY_DRIVER" = "ath10k" ] && hostap_set ieee80211ac 1
 	fi
 
 	if [ -n "$FREQLIST" ] && [ "$FREQLIST" != "-" ]; then
@@ -204,12 +204,11 @@ apply_hostap() {
 		fi
 		hostap_set ht_capab "$htcap"
 		hostap_set vht_capab "$vhtcap"
+		hostap_set vht_oper_chwidth "$vht80"
+		hostap_set vht_oper_centr_freq_seg0_idx "$oper_centr"
 		if [ "$PHY_DRIVER" = "ath11k" ]; then
 			hostap_set he_oper_chwidth "$vht80"
 			hostap_set he_oper_centr_freq_seg0_idx "$oper_centr"
-		elif [ "$PHY_DRIVER" = "ath10k" ]; then
-			hostap_set vht_oper_chwidth "$vht80"
-			hostap_set vht_oper_centr_freq_seg0_idx "$oper_centr"
 		fi
 	fi
 
