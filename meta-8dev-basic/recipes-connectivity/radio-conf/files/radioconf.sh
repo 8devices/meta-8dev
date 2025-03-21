@@ -51,74 +51,79 @@ vapid() {
 
 hostap_get() {
 	var=$1
-	cfg=/etc/hostapd/$VAP_NAME.conf
-	if [ ! -f $cfg ]; then
+	cfg=/etc/hostapd/"$VAP_NAME".conf
+	if [ ! -f "$cfg" ]; then
 		return 1
 	fi
-	sed -n "s/.*\b$var=\(.*\)/\1/p" $cfg
+	sed -n "s/.*\b$var=\(.*\)/\1/p" "$cfg"
 }
 
 hostap_set() {
 	var=$1
 	val=$2
-	cfg=/etc/hostapd/$VAP_NAME.conf
-	if [ ! -f $cfg ]; then
+	cfg=/etc/hostapd/"$VAP_NAME".conf
+	if [ ! -f "$cfg" ]; then
 		return 1
 	fi
 
 	debug "hostapd[$VAP_NAME] $var=$val"
 	if [ -z "$val" ]; then
-		sed -i "/\b$var=.*/d" $cfg
-	elif grep -qe "\b$var=" $cfg; then
-		sed -i "s/\b$var=.*/$var=$val/" $cfg
+		sed -i "/\b$var=.*/d" "$cfg"
+	elif grep -qe "\b$var=" "$cfg"; then
+		sed -i "s/\b$var=.*/$var=$val/" "$cfg"
 	else
-		echo $var=$val >> $cfg
+		echo $var=$val >> "$cfg"
 	fi
 }
 
 supplicant_get() {
 	var=$1
-	cfg=/etc/wpa_supplicant/$VAP_NAME.conf
-	if [ ! -f $cfg ]; then
+	cfg=/etc/wpa_supplicant/"$VAP_NAME".conf
+	if [ ! -f "$cfg" ]; then
 		return 1
 	fi
-	sed -n "s/.*\b$var=\(.*\)/\1/p" $cfg
+	sed -n "s/.*\b$var=\(.*\)/\1/p" "$cfg"
 }
 
 supplicant_set() {
 	var=$1
 	val=$2
 	global=$3
-	cfg=/etc/wpa_supplicant/$VAP_NAME.conf
-	if [ ! -f $cfg ]; then
+	cfg=/etc/wpa_supplicant/"$VAP_NAME".conf
+	if [ ! -f "$cfg" ]; then
 		return 1
 	fi
 
 	debug "wpa_supplicant[$VAP_NAME] $var=$val"
 	if [ -z "$val" ]; then
-		sed -i "/\b$var=.*/d" $cfg
-	elif grep -qe "\b$var=" $cfg; then
-		sed -i "s/\b$var=.*/$var=$val/" $cfg
+		sed -i "/\b$var=.*/d" "$cfg"
+	elif grep -qe "\b$var=" "$cfg"; then
+		sed -i "s/\b$var=.*/$var=$val/" "$cfg"
 	else
 		[ -n "$global" ] && chr="{" || chr="}"
-		sed -i "/$chr/i $var=$val" $cfg
+		sed -i "/$chr/i $var=$val" "$cfg"
 	fi
 }
 
 init_hostap() {
 	mkdir -p /etc/hostapd
-	cp /etc/hostapd.conf /etc/hostapd/$VAP_NAME.conf
-	info "Initialized AP config at /etc/hostapd/$VAP_NAME.conf"
+	cp /etc/hostapd.conf /etc/hostapd/"$VAP_NAME".conf
+	info "Initialized AP config at /etc/hostapd/"$VAP_NAME".conf"
 }
 
 init_supplicant() {
 	mkdir -p /etc/wpa_supplicant
-	cp /etc/wpa_supplicant.conf /etc/wpa_supplicant/$VAP_NAME.conf
-	info "Initialized STA config at /etc/wpa_supplicant/$VAP_NAME.conf"
+	cp /etc/wpa_supplicant.conf /etc/wpa_supplicant/"$VAP_NAME".conf
+	info "Initialized STA config at /etc/wpa_supplicant/"$VAP_NAME".conf"
 }
 
 init_vap_defaults() {
-	[ -n "$BAND" ] || find_phy_band
+	[ -n "$BAND" ] || {
+		first_freq=$(iw phy "$PHY_NAME"	info | \
+			grep -oE "[0-9]+\.0 MHz" | \
+			awk -F'.' '{print $1; exit}')
+		[ "$first_freq" -lt "4000" ] && BAND=2 || BAND=5
+	}
 	[ -n "$COUNTRY" ] || COUNTRY=US
 	[ -n "$CHWIDTH" ] || CHWIDTH=20
 	[ -n "$CHANNEL" ] || CHANNEL=0
@@ -171,7 +176,7 @@ apply_hostap() {
 	if [ -n "$COUNTRY" ]; then
 		hostap_set country_code "$COUNTRY"
 	fi
-	
+
 	if [ "$BAND" = "2" ]; then
 		hostap_set hw_mode g
 		hostap_set ieee80211ac
@@ -307,11 +312,6 @@ apply_supplicant() {
 	info "Applied STA config settings to /etc/wpa_supplicant/$VAP_NAME.conf"
 }
 
-find_phy_band() {
-	first_freq=$(iw phy "$PHY_NAME"	info | grep -oE "[0-9]+\.0 MHz" | awk -F'.' '{print $1; exit}')
-	[ "$first_freq" -lt "4000" ] && BAND=2 || BAND=5
-}
-
 update_vap() {
 	[ -z "$VAP_NAME" ] && return
 	debug "Updating VAP $VAP_NAME configuration"
@@ -334,8 +334,8 @@ teardown_vap() {
 }
 
 purge_radio() {
-	#XXX: on no ifaces left, for would attempt to iterate literal path string. use ls instead
-	for iface in $(ls "/sys/class/ieee80211/$PHY_NAME/device/net/" 2>/dev/null); do
+	[ -d /sys/class/ieee80211/"$PHY_NAME"/device/net/ ] || return
+	for iface in /sys/class/ieee80211/"$PHY_NAME"/device/net/*; do
 		VAP_NAME="$(basename $iface)"
 		teardown_vap
 	done
@@ -347,7 +347,7 @@ setup_vap() {
 	[ "$VAP_TYPE" = "ap" ] && iw_vap_type="__ap"
 	[ "$VAP_TYPE" = "sta" ] && iw_vap_type="station"
 
-	if [ -d /sys/class/net/$VAP_NAME/wireless ]; then
+	if [ -d /sys/class/net/"$VAP_NAME"/wireless ]; then
 		iw dev "$VAP_NAME" set type "$iw_vap_type"
 	else
 		iw phy "$PHY_NAME" interface add "$VAP_NAME" type "$iw_vap_type"
@@ -388,9 +388,9 @@ parse_radio() {
 }
 
 parse_vap() {
-	[ -f "/sys/class/net/$VAP_NAME/phy80211/name" ] || help "Error: iface not part of VAP"
-	PHY_NAME=$(cat "/sys/class/net/$VAP_NAME/phy80211/name")
-	PHY_DRIVER=$(readlink -f "/sys/class/net/$VAP_NAME/phy80211/device/driver" | grep -o "ath[0-9]\+k")
+	[ -f /sys/class/net/"$VAP_NAME"/phy80211/name ] || help "Error: iface not part of VAP"
+	PHY_NAME=$(cat /sys/class/net/"$VAP_NAME"/phy80211/name)
+	PHY_DRIVER=$(readlink -f /sys/class/net/"$VAP_NAME"/phy80211/device/driver | grep -o "ath[0-9]\+k")
 }
 
 parse_args() {
@@ -446,7 +446,7 @@ parse_args() {
 				shift
 				;;
 			country)
-				[ "$(echo $2 | wc -m)" -ne 3 ] && help "Invalid country code: $2"
+				[ "${#2}" -ne 2 ] && help "Invalid country code: $2"
 				COUNTRY=$2
 				shift
 				;;
@@ -480,7 +480,6 @@ parse_args() {
 		esac
 		shift
 	done
-	
 }
 
 help() {
