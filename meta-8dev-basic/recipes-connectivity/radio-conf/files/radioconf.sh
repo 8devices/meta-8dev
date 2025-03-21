@@ -124,30 +124,43 @@ init_vap_defaults() {
 	[ -n "$CHANNEL" ] || CHANNEL=0
 }
 
-find_center_oper_freq() {
-	[ "$CHANNEL" -ge 36 -a "$CHANNEL" -le 177 ] || [ "$CHANNEL" -gt 5000 ] || return
-	if [ "$CHANNEL" -gt 1000 ]; then
-		chnumber=$((($CHANNEL-5000)/5))
-	else
-		chnumber=$CHANNEL
+find_channel_number() {
+	local chval=$1
+
+	[ "$chval" -lt 1000 ] && chan_number=$chval && return
+
+	if [ $chval -ge 2412 -a $chval -le 2472 ]; then
+		chan_number=$(((chval - 2412) / 5 + 1))
+	elif [ $chval -eq 2484 ]; then
+		chan_number=14
+	elif [ $chval -ge 5180 -a $chval -le 5885 ]; then
+		chan_number=$(((chval - 5000) / 5))
 	fi
+}
+
+find_channel_center() {
+	local chval=$1
+
+	[ "$chval" -ge 36 -a "$chval" -le 177 ] || [ "$chval" -gt 5000 ] || return
+
+	find_channel_number $chval
+
 	case "$CHWIDTH" in
-		80)
-			[ "$chnumber" -ge 36 -a "$chnumber" -le 48 ] && oper_centr=42
-			[ "$chnumber" -ge 52 -a "$chnumber" -le 64 ] && oper_centr=58
-			[ "$chnumber" -ge 100 -a "$chnumber" -le 112 ] && oper_centr=106
-			[ "$chnumber" -ge 116 -a "$chnumber" -le 128 ] && oper_centr=122
-			[ "$chnumber" -ge 132 -a "$chnumber" -le 144 ] && oper_centr=138
-			[ "$chnumber" -ge 149 -a "$chnumber" -le 161 ] && oper_centr=155
-			[ "$chnumber" -ge 165 -a "$chnumber" -le 177 ] && oper_centr=171
-			;;
 		160)
-			[ "$chnumber" -ge 36 -a "$chnumber" -le 64 ] && oper_centr=50
-			[ "$chnumber" -ge 100 -a "$chnumber" -le 128 ] && oper_centr=114
-			[ "$chnumber" -ge 149 -a "$chnumber" -le 177 ] && oper_centr=163
+			[ "$chan_number" -ge 36 -a "$chan_number" -le 64 ] && chan_center=50
+			[ "$chan_number" -ge 100 -a "$chan_number" -le 128 ] && chan_center=114
+			[ "$chan_number" -ge 149 -a "$chan_number" -le 177 ] && chan_center=163
 			;;
-		*) #no need to validate for 20 or 40mhz
-			return
+		80)
+			[ "$chan_number" -ge 36 -a "$chan_number" -le 48 ] && chan_center=42
+			[ "$chan_number" -ge 52 -a "$chan_number" -le 64 ] && chan_center=58
+			[ "$chan_number" -ge 100 -a "$chan_number" -le 112 ] && chan_center=106
+			[ "$chan_number" -ge 116 -a "$chan_number" -le 128 ] && chan_center=122
+			[ "$chan_number" -ge 132 -a "$chan_number" -le 144 ] && chan_center=138
+			[ "$chan_number" -ge 149 -a "$chan_number" -le 161 ] && chan_center=155
+			[ "$chan_number" -ge 165 -a "$chan_number" -le 177 ] && chan_center=171
+			;;
+		*)
 			;;
 	esac
 }
@@ -175,11 +188,12 @@ apply_hostap() {
 	fi
 
 	if [ -n "$FREQLIST" ] && [ "$FREQLIST" != "-" ]; then
-		hostap_set channel 0	       
+		hostap_set channel 0
 		hostap_set freqlist "$FREQLIST"
 	elif [ -n "$CHANNEL" ] && [ "$CHANNEL" -gt "1000" ]; then
-		hostap_set channel 0
-		hostap_set freqlist "$CHANNEL"
+		find_channel_number "$CHANNEL"
+		hostap_set channel $chan_number
+		hostap_set freqlist
 	elif [ -n "$CHANNEL" ] && [ "$CHANNEL" -lt "1000" ]; then
 		hostap_set channel "$CHANNEL"
 		hostap_set freqlist
@@ -191,7 +205,7 @@ apply_hostap() {
 
 		[ -n "$CHANNEL" ] || CHANNEL=$(hostap_get channel)
 		# XXX: center frequency is auto detected via ACS if channel is not set
-		[ "$CHANNEL" -ne "0" ] && find_center_oper_freq
+		[ "$CHANNEL" -ne "0" ] && find_channel_center "$CHANNEL"
 
 		[ "$CHWIDTH" -ge "40" ] && htcap="$htcap[SHORT-GI-40][HT40-][HT40+]"
 
@@ -205,10 +219,10 @@ apply_hostap() {
 		hostap_set ht_capab "$htcap"
 		hostap_set vht_capab "$vhtcap"
 		hostap_set vht_oper_chwidth "$vht80"
-		hostap_set vht_oper_centr_freq_seg0_idx "$oper_centr"
+		hostap_set vht_oper_centr_freq_seg0_idx "$chan_center"
 		if [ "$PHY_DRIVER" = "ath11k" ]; then
 			hostap_set he_oper_chwidth "$vht80"
-			hostap_set he_oper_centr_freq_seg0_idx "$oper_centr"
+			hostap_set he_oper_centr_freq_seg0_idx "$chan_center"
 		fi
 	fi
 
