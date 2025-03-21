@@ -5,6 +5,8 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/Apache-2.0;md5=89aea4e17d99a7ca
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI = "\
     file://radioconf.sh \
+"
+SRC_URI:append:tobufi = "\
     file://radios.cfg \
 "
 
@@ -15,8 +17,10 @@ do_install() {
     install -d ${D}/${sbindir}
     install -m 0755 ${WORKDIR}/radioconf.sh ${D}/${sbindir}/radioconf
 
-    install -d ${D}/${sysconfdir}
-    install -m 0644 ${WORKDIR}/radios.cfg ${D}/${sysconfdir}
+    if [ -r ${WORKDIR}/radios.cfg ]; then
+        install -d ${D}/${sysconfdir}
+        install -m 0644 ${WORKDIR}/radios.cfg ${D}/${sysconfdir}
+    fi
 }
 
 FILES:${PN} = " \
