@@ -1,6 +1,6 @@
-DEPENDS += "qca-swiss-army-knife-native"
+DEPENDS:append:tobufi = "qca-swiss-army-knife-native"
 
-FILESEXTRAPATHS:prepend := "${THISDIR}/${PN}:"
+FILESEXTRAPATHS:prepend:tobufi := "${THISDIR}/${PN}:"
 SRC_URI:append:tobufi = "\
     file://WCN3990 \
     file://QCN9074 \
