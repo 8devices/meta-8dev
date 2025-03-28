@@ -1,4 +1,5 @@
 require conf/machine/include/qcom/qcs40x.inc
+include conf/machine/include/tobufi-extras.inc
 
 MACHINEOVERRIDES =. "tobufi:"
 
