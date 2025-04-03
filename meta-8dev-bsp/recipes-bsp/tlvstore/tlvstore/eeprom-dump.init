@@ -1,0 +1,23 @@
+#!/bin/sh
+#
+# SPDX-License-Identifier: MIT
+#
+
+### BEGIN INIT INFO
+# Provides:          eeprom-dump
+# Required-Start:    $local_fs
+# Required-Stop:
+# Default-Start:     S
+# Default-Stop:
+# Short-Description: Board EEPROM dump
+# Description:       System EEPROM board data dump
+# X-Start-Before:    udev
+### END INIT INFO
+
+[ -x "/usr/bin/eeprom-dump" ] || exit 0
+
+# Attempt to remount root if it's read-only
+mount | grep -w / | grep -wq rw || remount=1
+[ -z "$remount" ] || mount -n -o remount,rw /
+/usr/bin/eeprom-dump
+[ -z "$remount" ] || mount -n -o remount,ro /
