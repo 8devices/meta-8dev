@@ -25,6 +25,10 @@ PREFERRED_PROVIDER_virtual/kernel ?= "linux-yocto"
 PREFERRED_VERSION_linux-yocto ?= "6.6%"
 PREFERRED_PROVIDER_android-tools-conf = "android-tools-conf-configfs"
 
+MACHINE_ESSENTIAL_EXTRA_RRECOMMENDS += "\
+    qbootctl \
+"
+
 MACHINE_EXTRA_RRECOMMENDS += " \
     kernel-modules \
     linux-firmware-ath10k \
