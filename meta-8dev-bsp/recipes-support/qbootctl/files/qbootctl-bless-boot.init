@@ -1,0 +1,15 @@
+#!/bin/sh
+#
+# SPDX-License-Identifier: MIT
+#
+
+### BEGIN INIT INFO
+# Provides:          qbootctl-bless-boot
+# Required-Start:    $all
+# Required-Stop:
+# Default-Start:     S
+# Default-Stop:
+# Short-Description: Mark the Current Boot slot as Good
+### END INIT INFO
+
+qbootctl -m
