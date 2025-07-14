@@ -9,3 +9,7 @@
 # - network-debug       - network debugging tools
 #
 FEATURE_PACKAGES_network-debug = "packagegroup-network-debug"
+#
+# - update-tools        - update & related tools
+#
+FEATURE_PACKAGES_update-tools = "packagegroup-update-tools"
