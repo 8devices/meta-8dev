@@ -18,15 +18,34 @@ This layer depends on:
 	layers: meta-networking
 	branch: scarthgap
 
+	URI: https://github.com/sbabic/meta-swupdate.git
+	layers: meta-swupdate
+	branch: scarthgap
+
 ## Quick Start
 
-### Building Image
+### Building update image
 
-Start the image by specifying target `DISTRO` for desired `MACHINE`:
+The update image is used to upgrade the device software. The following command
+can be used to build it:
 
    ```
-   `DISTRO=8dev-basic bitbake 8dev-image-base
+   DISTRO=8dev-basic bitbake update-image-8dev-base
    ```
+
+`DISTRO` and `MACHINE` variables can be used to specify the target
+distribution and machine, respectively.
+
+### Building recovery image
+
+The recovery image is used to recover the device or perform a manual update. The
+following command can be used to build it:
+
+   ```
+   DISTRO=8dev-basic bitbake 8dev-image-base
+   ```
+
+This command support `DISTRO` and `MACHINE` variables as well.
 
 ## Support and Contributing
 
