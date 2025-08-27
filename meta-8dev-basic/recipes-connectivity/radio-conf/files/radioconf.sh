@@ -177,6 +177,14 @@ apply_hostap() {
 		hostap_set country_code "$COUNTRY"
 	fi
 
+	if [ -n "$WDS_BRIDGE" -a "$WDS_BRIDGE" != "-" ]; then
+		hostap_set bridge "$WDS_BRIDGE"
+		hostap_set wds_sta 1
+	elif [ "$WDS_BRIDGE" = "-" ]; then
+		hostap_set bridge
+		hostap_set wds_sta
+	fi
+
 	if [ "$BAND" = "2" ]; then
 		hostap_set hw_mode g
 		hostap_set ieee80211ac
@@ -321,8 +329,21 @@ update_vap() {
 		[ "$vap_mode" = "managed" ] && VAP_TYPE="sta"
 	fi
 
-	[ "$VAP_TYPE" = "ap" ] && apply_hostap
-	[ "$VAP_TYPE" = "sta" ] && apply_supplicant
+	if [ "$VAP_TYPE" = "ap" ]; then
+		apply_hostap
+	elif [ "$VAP_TYPE" = "sta" ]; then 
+		if [ "$WDS_BRIDGE" = "-" ]; then
+			ip link set dev "$VAP_NAME" nomaster
+			iw dev "$VAP_NAME" set 4addr off
+		elif [ -n "$WDS_BRIDGE" ]; then
+			iw dev "$VAP_NAME" set 4addr on
+			if [ -d /sys/class/net/"$WDS_BRIDGE"/bridge ]; then
+				ip link set dev "$VAP_NAME" master "$WDS_BRIDGE"
+			fi
+		fi
+		apply_supplicant
+	fi
+
 	info "Updated $VAP_NAME VAP configuration"
 }
 
@@ -436,6 +457,10 @@ parse_args() {
 				WPAPSK="$2"
 				shift
 				;;
+			wds-bridge)
+				[ "$2" = "no" ] && WDS_BRIDGE=- || WDS_BRIDGE=$2
+				shift
+				;;
 			txpower)
 				TXPOWER=$2
 				shift
@@ -500,6 +525,7 @@ help() {
 	echo -e "\tpass <passphrase>"
 	echo -e "\ttxpower <dbm>"
 	echo -e "\tchannel <channel|frequency>"
+	echo -e "\twds-bridge <no|bridge iface>"
 	echo -e "\tfreq <no|frequency-list>"
 	echo -e "\tchwidth <20|40|80|160>"
 	echo -e "\tband <2|5>"
