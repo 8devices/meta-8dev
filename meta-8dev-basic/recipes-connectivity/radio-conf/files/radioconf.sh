@@ -170,6 +170,15 @@ find_channel_center() {
 	esac
 }
 
+find_channel_frequency() {
+	local chval=$1
+	# XXX: edge-case for chan_num 14 in 2.4 GHz band
+	[ "$chval" -eq 14 -a "$BAND" = "2" ] && chan_freq=2484 && return
+
+	[ "$BAND" = "2" ] && freq_base=2412 || freq_base=5000
+	chan_freq=$((freq_base + (5 * chval)))
+}
+
 apply_hostap() {
 	hostap_set interface "$VAP_NAME"
 
@@ -287,6 +296,13 @@ apply_supplicant() {
 		# XXX: scan_freq is not supported by our wpa_supplicant
 		#supplicant scan_freq "$freqs" global
 		supplicant_set freq_list "$freqs" global
+	elif [ -n "$CHANNEL" -a "$CHANNEL" -ne 0 ] && [ "$CHANNEL" -gt "1000" ]; then
+		supplicant_set freq_list "$CHANNEL" global
+	elif [ -n "$CHANNEL" -a "$CHANNEL" -ne 0 ] && [ "$CHANNEL" -lt "1000" ]; then
+		# XXX: supplicant works with channel frequencies
+		# convert channel number to channel frequency
+		find_channel_frequency "$CHANNEL"	
+		supplicant_set freq_list "$chan_freq" global
 	fi
 	if [ "$SSID" = "-" ] || [ -z "$SSID" -a -z "`supplicant_get ssid`" ]; then
 		# When SSID is not specified and is
