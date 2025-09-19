@@ -8,8 +8,12 @@ COMPATIBLE_MACHINE = "tobufi"
 
 DEPENDS += "xz"
 
+TLVS_BRANCH ?= "master"
+TLVS_URI ?= "https://github.com/8devices/tlvstore.git"
+TLVS_REV ?= "${AUTOREV}"
+
 SRC_URI = "\
-    git://github.com/edzius/tlvstore.git;protocol=https;branch=master \
+    ${TLVS_URI};branch=${TLVS_BRANCH} \
     file://eeprom-dump.sh \
     file://eeprom-dump.service \
     file://eeprom-dump.init \
@@ -18,7 +22,7 @@ SRC_URI:append:tobufi = "\
     file://eeprom-store \
     file://eeprom-legacy \
 "
-SRCREV = "5e52c40508f8cf815eb86209f215c3637526b1dd"
+SRCREV = "${TLVS_REV}"
 
 S = "${WORKDIR}/git"
 
