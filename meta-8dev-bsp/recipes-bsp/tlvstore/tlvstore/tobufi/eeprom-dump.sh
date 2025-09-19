@@ -1,5 +1,7 @@
 #!/bin/sh
 
+[ -f /etc/board.conf ] && [ -s /lib/firmware/ath10k/cal-snoc-a000000.wifi.bin ] && exit 0
+
 if ! tlvs -g /usr/share/tlvs/eeprom-store > /tmp/board.json; then
 	tlvs -g /usr/share/tlvs/eeprom-legacy > /tmp/board.json && legacy=1
 fi
