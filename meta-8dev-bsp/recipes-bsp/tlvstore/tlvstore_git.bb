@@ -30,10 +30,13 @@ STORAGE_FILE = "/etc/eeprom"
 STORAGE_FILE:tobufi = "/sys/bus/i2c/devices/0-0056/eeprom"
 STORAGE_SIZE = "8192"
 STORAGE_SIZE:tobufi = ""
+STORAGE_OFFSET = "0"
+STORAGE_OFFSET:tobufi = "512"
 
 EXTRA_OEMAKE += "\
     CONFIG_TLVS_FILE=${STORAGE_FILE} \
     CONFIG_TLVS_SIZE=${STORAGE_SIZE} \
+    CONFIG_TLVS_OFFSET=${STORAGE_OFFSET} \
 "
 
 do_install() {

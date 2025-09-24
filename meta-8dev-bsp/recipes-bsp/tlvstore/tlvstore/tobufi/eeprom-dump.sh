@@ -3,14 +3,14 @@
 [ -f /etc/board.conf ] && [ -s /lib/firmware/ath10k/cal-snoc-a000000.wifi.bin ] && exit 0
 
 if ! tlvs -g /usr/share/tlvs/eeprom-store > /tmp/board.json; then
-	tlvs -g /usr/share/tlvs/eeprom-legacy > /tmp/board.json && legacy=1
+	tlvs -O 0 -g /usr/share/tlvs/eeprom-legacy > /tmp/board.json && legacy=1
 fi
 
 if [ ! -s /lib/firmware/ath10k/cal-snoc-a000000.wifi.bin ]; then
 	if [ -z "$legacy" ]; then
 		tlvs -g RADIO_CALIBRATION_DATA=@/lib/firmware/ath10k/cal-snoc-a000000.wifi.bin
 	else
-		tlvs -g RADIO_CALDATA=@/lib/firmware/ath10k/cal-snoc-a000000.wifi.bin
+		tlvs -O 0 -g RADIO_CALDATA=@/lib/firmware/ath10k/cal-snoc-a000000.wifi.bin
 	fi
 fi
 
