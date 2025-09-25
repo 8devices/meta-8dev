@@ -5,6 +5,7 @@ PACKAGECONFIG_CONFARGS:tobufi = ""
 SRC_URI:append:tobufi = "\
     file://swupdate.cfg \
     file://09-swupdate-args \
+    file://swinfo.sh \
 "
 
 do_install:append:tobufi() {
@@ -13,4 +14,7 @@ do_install:append:tobufi() {
 
     install -d ${D}${sysconfdir}
     install -m 644 ${WORKDIR}/swupdate.cfg ${D}${sysconfdir}
+
+    install -d ${D}${bindir}
+    install -m 755 ${WORKDIR}/swinfo.sh ${D}${bindir}/swinfo
 }
