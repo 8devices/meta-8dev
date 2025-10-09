@@ -12,7 +12,7 @@
 / {
 	model = "8devices Robonode";
 	compatible = "8devices,robonode", "8devices,tobufi",
-		     "qcom,qcs405";
+		     "qcom,qcs405", "qcom,qcs404";
 	qcom,board-id = <0x20 0x0>;
 	qcom,msm-id = <352 0x10001>;
 
