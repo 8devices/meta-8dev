@@ -253,3 +253,22 @@
 	vdda1p8-supply = <&vreg_l5_1p8>;
 	status = "okay";
 };
+
+&{/cpus} {
+	cpu-map {
+		cluster0 {
+			core0 {
+				cpu = <&CPU0>;
+			};
+			core1 {
+				cpu = <&CPU1>;
+			};
+			core2 {
+				cpu = <&CPU2>;
+			};
+			core3 {
+				cpu = <&CPU3>;
+			};
+		};
+	};
+};
