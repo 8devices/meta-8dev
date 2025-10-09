@@ -12,7 +12,7 @@
 / {
 	model = "8devices Robonode";
 	compatible = "8devices,robonode", "8devices,tobufi",
-		     "qcom,qcs405";
+		     "qcom,qcs405", "qcom,qcs404";
 	qcom,board-id = <0x20 0x0>;
 	qcom,msm-id = <352 0x10001>;
 
@@ -113,6 +113,13 @@
 		input-enable;
 	};
 
+	gpio_fan_pins: gpio-fan-pins {
+		pins = "gpio39";
+		function = "gpio";
+		bias-disable;
+		drive-strength = <2>;
+	};
+
 	usb3_vbus_boost: usb3-vbus-boost {
 		pins = "gpio16";
 		function = "gpio";
@@ -169,6 +176,15 @@
 			linux,code = <BTN_1>;
 			gpios = <&tlmm 51 GPIO_ACTIVE_HIGH>;
 		};
+	};
+
+	gpio_fan: gpio-fan {
+		compatible = "gpio-fan";
+		pinctrl-0 = <&gpio_fan_pins>;
+		pinctrl-names = "default";
+		gpios = <&tlmm 39 GPIO_ACTIVE_HIGH>;
+		gpio-fan,speed-map = <0 0>, <1 1>;
+		#cooling-cells = <2>;
 	};
 };
 
@@ -252,4 +268,39 @@
 	vdd-supply = <&vreg_l3_1p05>;
 	vdda1p8-supply = <&vreg_l5_1p8>;
 	status = "okay";
+};
+
+&{/thermal-zones/cluster-thermal} {
+	trips {
+		cluster_alert0_custom0: trip-point0-custom0 {
+			temperature = <90000>;
+			hysteresis = <10000>;
+			type = "active";
+		};
+	};
+	cooling-maps {
+		map1 {
+			trip = <&cluster_alert0_custom0>;
+			cooling-device = <&gpio_fan 0 1>;
+		};
+	};
+};
+
+&{/cpus} {
+	cpu-map {
+		cluster0 {
+			core0 {
+				cpu = <&CPU0>;
+			};
+			core1 {
+				cpu = <&CPU1>;
+			};
+			core2 {
+				cpu = <&CPU2>;
+			};
+			core3 {
+				cpu = <&CPU3>;
+			};
+		};
+	};
 };

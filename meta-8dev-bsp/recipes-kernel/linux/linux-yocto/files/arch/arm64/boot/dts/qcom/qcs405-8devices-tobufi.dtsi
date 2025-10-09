@@ -10,7 +10,7 @@
 
 / {
 	model = "8devices TobuFi SOM";
-	compatible = "8devices,tobufi", "qcom,qcs405";
+	compatible = "8devices,tobufi", "qcom,qcs405", "qcom,qcs404";
 
 	aliases {
 		serial0 = &blsp1_uart2;
