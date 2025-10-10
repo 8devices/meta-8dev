@@ -7,7 +7,7 @@ ConditionPathIsDirectory=/sys
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/sys-eeprom-dump
+ExecStart=/usr/bin/eeprom-dump
 
 [Install]
 WantedBy=sysinit.target
