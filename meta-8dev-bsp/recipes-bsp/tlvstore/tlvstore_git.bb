@@ -9,7 +9,7 @@ COMPATIBLE_MACHINE = "tobufi"
 DEPENDS += "xz"
 
 TLVS_BRANCH ?= "master"
-TLVS_URI ?= "https://github.com/8devices/tlvstore.git"
+TLVS_URI ?= "git://github.com/8devices/tlvstore.git;protocol=https"
 TLVS_REV ?= "dca090d2a354622ad8eea52a70348be55d96705c"
 
 SRC_URI = "\
