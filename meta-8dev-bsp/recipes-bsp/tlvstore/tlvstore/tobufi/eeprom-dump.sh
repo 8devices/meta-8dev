@@ -2,8 +2,8 @@
 
 [ -f /etc/board.conf ] && [ -s /lib/firmware/ath10k/cal-snoc-a000000.wifi.bin ] && exit 0
 
-if ! tlvs -g /usr/share/tlvs/eeprom-store > /tmp/board.json; then
-	tlvs -O 0 -g /usr/share/tlvs/eeprom-legacy > /tmp/board.json && legacy=1
+if ! tlvs -g @/usr/share/tlvs/eeprom-store > /tmp/board.conf; then
+	tlvs -O 0 -g @/usr/share/tlvs/eeprom-legacy > /tmp/board.conf && legacy=1
 fi
 
 if [ ! -s /lib/firmware/ath10k/cal-snoc-a000000.wifi.bin ]; then
