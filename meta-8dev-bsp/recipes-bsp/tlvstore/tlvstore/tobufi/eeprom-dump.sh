@@ -3,7 +3,10 @@
 [ -f /etc/board.conf ] && [ -s /lib/firmware/ath10k/cal-snoc-a000000.wifi.bin ] && exit 0
 
 if ! tlvs -g @/usr/share/tlvs/eeprom-store > /tmp/board.conf; then
-	tlvs -O 0 -g @/usr/share/tlvs/eeprom-legacy > /tmp/board.conf && legacy=1
+	# XXX: legacy EEPROM can have two variations for `wlan1` MAC address
+	if ! tlvs -O 0 -g @/usr/share/tlvs/eeprom-legacy > /tmp/board.conf && legacy=1; then 
+		tlvs -O 0 -g @/usr/share/tlvs/eeprom-legacy-2 > /tmp/board.conf && legacy=1
+	fi
 fi
 
 if [ ! -s /lib/firmware/ath10k/cal-snoc-a000000.wifi.bin ]; then

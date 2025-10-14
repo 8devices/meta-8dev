@@ -21,6 +21,7 @@ SRC_URI = "\
 SRC_URI:append:tobufi = "\
     file://eeprom-store \
     file://eeprom-legacy \
+    file://eeprom-legacy-2 \
 "
 SRCREV = "${TLVS_REV}"
 
@@ -55,6 +56,7 @@ do_install:append:tobufi() {
     install -d ${D}${datadir}/tlvs
     install -m 0755 ${WORKDIR}/eeprom-store ${D}${datadir}/tlvs
     install -m 0755 ${WORKDIR}/eeprom-legacy ${D}${datadir}/tlvs
+    install -m 0755 ${WORKDIR}/eeprom-legacy-2 ${D}${datadir}/tlvs
 }
 
 FILES:${PN} += "${datadir}"
