@@ -1,0 +1,6 @@
+[Match]
+Path=platform-10000000.pci-pci-0000:01:00.0
+
+[Link]
+Name=wlan0
+MACAddressPolicy=persistent
