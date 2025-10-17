@@ -1,0 +1,6 @@
+[Match]
+Path=platform-a000000.wifi
+
+[Link]
+Name=wlan1
+MACAddressPolicy=persistent
