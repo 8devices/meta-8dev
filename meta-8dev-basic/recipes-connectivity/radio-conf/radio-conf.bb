@@ -8,6 +8,7 @@ SRC_URI = "\
 "
 SRC_URI:append:tobufi = "\
     file://radios.cfg \
+    file://radio-rename.rules \
 "
 
 do_configure[noexec] = "1"
@@ -23,9 +24,18 @@ do_install() {
     fi
 }
 
+do_install:append:tobufi() {
+    install -d ${D}${base_libdir}/udev/rules.d/
+    install -m 0644 ${WORKDIR}/radio-rename.rules ${D}${base_libdir}/udev/rules.d/
+}
+
 FILES:${PN} = " \
     ${sbindir} \
     ${sysconfdir} \
+"
+
+FILES:${PN}:append:tobufi = "\
+   ${base_libdir}/udev/ \
 "
 
 RDEPENDS:${PN} = "hostapd wpa-supplicant iw"
