@@ -8,8 +8,6 @@ SRC_URI = "\
 "
 SRC_URI:append:tobufi = "\
     file://radios.cfg \
-    file://10-ath11k-ifname.link \
-    file://10-ath10k-ifname.link \
 "
 
 do_configure[noexec] = "1"
@@ -25,19 +23,9 @@ do_install() {
     fi
 }
 
-do_install:append:tobufi() {
-    install -d ${D}${systemd_unitdir}/network
-    install -m 0644 ${WORKDIR}/10-ath11k-ifname.link ${D}${systemd_unitdir}/network/
-    install -m 0644 ${WORKDIR}/10-ath10k-ifname.link ${D}${systemd_unitdir}/network/
-}
-
 FILES:${PN} = " \
     ${sbindir} \
     ${sysconfdir} \
-"
-
-FILES:${PN}:append:tobufi = "\
-   ${systemd_unitdir}/network \
 "
 
 RDEPENDS:${PN} = "hostapd wpa-supplicant iw"
