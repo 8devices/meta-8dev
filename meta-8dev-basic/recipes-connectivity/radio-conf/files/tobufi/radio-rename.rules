@@ -1,0 +1,5 @@
+ACTION=="add", SUBSYSTEM=="net", ENV{ID_PATH}=="platform-10000000.pci-pci-0000:01:00.0", \
+	TEST!="/run/wlan0-renamed", RUN+="/bin/touch /run/wlan0-renamed", NAME="wlan0"
+
+ACTION=="add", SUBSYSTEM=="net", ENV{ID_PATH}=="platform-a000000.wifi", \
+	TEST!="/run/wlan1-renamed", RUN+="/bin/touch /run/wlan1-renamed", NAME="wlan1"

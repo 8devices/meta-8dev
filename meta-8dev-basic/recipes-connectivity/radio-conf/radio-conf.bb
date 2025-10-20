@@ -8,8 +8,7 @@ SRC_URI = "\
 "
 SRC_URI:append:tobufi = "\
     file://radios.cfg \
-    file://10-ath11k-ifname.link \
-    file://10-ath10k-ifname.link \
+    file://radio-rename.rules \
 "
 
 do_configure[noexec] = "1"
@@ -26,9 +25,8 @@ do_install() {
 }
 
 do_install:append:tobufi() {
-    install -d ${D}${systemd_unitdir}/network
-    install -m 0644 ${WORKDIR}/10-ath11k-ifname.link ${D}${systemd_unitdir}/network/
-    install -m 0644 ${WORKDIR}/10-ath10k-ifname.link ${D}${systemd_unitdir}/network/
+    install -d ${D}${base_libdir}/udev/rules.d/
+    install -m 0644 ${WORKDIR}/radio-rename.rules ${D}${base_libdir}/udev/rules.d/
 }
 
 FILES:${PN} = " \
@@ -37,7 +35,7 @@ FILES:${PN} = " \
 "
 
 FILES:${PN}:append:tobufi = "\
-   ${systemd_unitdir}/network \
+   ${base_libdir}/udev/ \
 "
 
 RDEPENDS:${PN} = "hostapd wpa-supplicant iw"
