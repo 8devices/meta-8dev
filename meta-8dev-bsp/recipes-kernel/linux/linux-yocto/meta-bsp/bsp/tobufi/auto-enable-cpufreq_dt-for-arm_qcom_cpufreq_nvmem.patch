@@ -1,0 +1,35 @@
+From 925037ff170720f13ddbae0f60134cc05c203db3 Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Giedr=C4=97=20=C5=A0imk=C5=ABnait=C4=97?=
+ <giedre.s@8devices.com>
+Date: Wed, 22 Oct 2025 07:15:33 +0000
+Subject: [PATCH] cpufreq: auto enable cpufreq_dt for arm_qcom_cpufreq_nvmem
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Since qcom_cpufreq_nvmem driver registers cpufreq_dt driver, it's neccesary to enable
+CONFIG_CPUFREQ_DT if CONFIG_ARM_QCOM_CPUFREQ_NVMEM is selected.
+
+This patch auto enables CONFIG_CPUFREQ_DT if CONFIG_ARM_QCOM_CPUFREQ_NVMEM is selected.
+
+Upstream-Status: Pending
+Signed-off-by: Giedrė Šimkūnaitė <giedre.s@8devices.com>
+---
+ drivers/cpufreq/Kconfig.arm | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/cpufreq/Kconfig.arm b/drivers/cpufreq/Kconfig.arm
+index c5cecbd89ba9..f05cdb591d7a 100644
+--- a/drivers/cpufreq/Kconfig.arm
++++ b/drivers/cpufreq/Kconfig.arm
+@@ -165,6 +165,7 @@ config ARM_QCOM_CPUFREQ_NVMEM
+ 	depends on NVMEM_QCOM_QFPROM
+ 	depends on QCOM_SMEM
+ 	select PM_OPP
++	select CPUFREQ_DT
+ 	help
+ 	  This adds the CPUFreq driver for Qualcomm Kryo SoC based boards.
+ 
+-- 
+2.25.1
+
