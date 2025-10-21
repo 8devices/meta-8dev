@@ -6,6 +6,7 @@ SRC_URI:append:tobufi = "\
     file://swupdate.cfg \
     file://09-swupdate-args \
     file://swinfo.sh \
+    file://update.sh \
 "
 
 do_install:append:tobufi() {
@@ -17,4 +18,7 @@ do_install:append:tobufi() {
 
     install -d ${D}${bindir}
     install -m 755 ${WORKDIR}/swinfo.sh ${D}${bindir}/swinfo
+    install -m 755 ${WORKDIR}/update.sh ${D}${bindir}/update
 }
+
+RDEPENDS:${PN}:append:tobufi = " swupdate-client swupdate-progress"

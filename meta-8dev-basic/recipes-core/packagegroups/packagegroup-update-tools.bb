@@ -6,6 +6,7 @@ inherit packagegroup
 RDEPENDS:${PN} = "\
     swupdate \
     swupdate-client \
+    swupdate-progress \
 "
 
 # Swupdate (in our system) currently does not support A/B boot slot switching.
