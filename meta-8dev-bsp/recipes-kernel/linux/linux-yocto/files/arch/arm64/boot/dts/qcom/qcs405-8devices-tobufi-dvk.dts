@@ -5,12 +5,13 @@
 
 /dts-v1/;
 
+#include <dt-bindings/gpio/gpio.h>
 #include "qcs405-8devices-tobufi.dtsi"
 
 / {
 	model = "8devices TobuFi DVK";
 	compatible = "8devices,tobufi-dvk", "8devices,tobufi",
-		     "qcom,qcs405";
+		     "qcom,qcs405", "qcom,qcs404";
 	qcom,board-id = <0x20 0x0>;
 	qcom,msm-id = <352 0x10001>;
 
