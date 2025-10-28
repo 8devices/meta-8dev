@@ -6,6 +6,7 @@ define KMETA_EXTERNAL_BSP t
 
 kconf hardware tobufi-standard.cfg
 kconf hardware cpufreq-gov-performance.cfg
+kconf hardware enable-gpio-fan-thermal-control.cfg
 
 patch enable-qcom-gdsc-for-qcs404-gcc.patch
 patch auto-enable-cpufreq_dt-for-arm_qcom_cpufreq_nvmem.patch
