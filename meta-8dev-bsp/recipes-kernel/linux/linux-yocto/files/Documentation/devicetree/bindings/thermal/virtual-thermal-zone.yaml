@@ -1,0 +1,283 @@
+# SPDX-License-Identifier: (GPL-2.0)
+# Based on:
+# - Documentation/devicetree/bindings/thermal/thermal-zones.yaml (kernel 6.6), Copyright (c) 2020 Linaro Ltd. Amit Kucheria <amitk@kernel.org>
+# Copyright (c) 2025 8devices UAB
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/thermal/virtual-thermal-zone.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Generic Virtual Thermal Zones
+
+maintainers:
+  - Giedrė Šimkūnaitė <giedre.s@8devices.com>
+
+description: |
+  The Generic Virtual Thermal Zones driver provides support for creating
+  virtual thermal zones that aggregate temperatures from one or more physical
+  thermal zones using configurable calculation methods (max, min, average, median, etc.).
+
+  For single-source zones, the driver uses direct pass-through (no calculation)
+  by default, making it useful for adding trip points and cooling policies to
+  existing thermal zones without modifying the original zone definition.
+
+  For multiple-source zones, temperatures are aggregated using the specified
+  calculation method (defaulting to 'max').
+
+  The driver automatically scans the device tree for nodes with
+  compatible = "virtual-thermal-zone" within the thermal-zones node.
+  No separate platform device node is required - the driver creates its
+  own platform device and automatically discovers all virtual thermal zone
+  definitions.
+
+properties:
+  compatible:
+    const: virtual-thermal-zone
+
+  source-thermal-zones:
+    $ref: /schemas/types.yaml#/definitions/string-array
+    description: |
+      Array of thermal zone names to aggregate. The driver will look up these
+      thermal zones by name and read their temperatures.
+    minItems: 1
+    maxItems: 32
+
+  calculate:
+    $ref: /schemas/types.yaml#/definitions/string
+    description: |
+      Temperature calculation method to use when multiple source thermal zones
+      are specified. Defines how multiple sensor readings are combined into a
+      single virtual temperature.
+
+      Default behavior:
+      - Single source (1 zone): No calculate property needed - driver automatically
+        uses direct pass-through with no temperature calculations.
+      - Multiple sources (2+ zones): Defaults to 'max' if not specified
+
+      Note: This property is ignored for single-source zones. The driver will
+      always use direct pass-through (no calculations) when only one source
+      thermal zone is specified.
+
+      Available calculation methods for multiple sources:
+      - max: Maximum temperature of all sources (default)
+      - min: Minimum temperature of all sources
+      - average: Arithmetic mean of all sources
+      - median: Median value of all sources
+      - mean: Same as average
+      - weighted-average: Weighted average (currently equal weights)
+      - rolling-average: Moving average over last 5 readings
+      - exponential-average: Exponential moving average (alpha=0.3)
+    enum:
+      - max
+      - min
+      - average
+      - median
+      - mean
+      - weighted-average
+      - rolling-average
+      - exponential-average
+
+  polling-delay-passive:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: |
+      Polling interval in milliseconds when any trip point is active.
+      If not specified, defaults to 100 ms.
+
+  polling-delay:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: |
+      Polling interval in milliseconds when no trip points are active.
+      If not specified, defaults to 1000 ms.
+
+  sustainable-power:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: |
+      Sustainable power in milliwatts for the power allocator governor.
+
+  coefficients:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    description: |
+      Thermal coefficients [slope, offset] for temperature calculation.
+    minItems: 2
+    maxItems: 2
+
+  thermal-governor:
+    $ref: /schemas/types.yaml#/definitions/string
+    description: |
+      Name of the thermal governor to use for this zone.
+    enum:
+      - step_wise
+      - fair_share
+      - bang_bang
+      - user_space
+      - power_allocator
+
+  trips:
+    type: object
+    description: |
+      Trip points for the virtual thermal zone.
+      Maximum 64 trip points supported (limited by thermal subsystem bitmask).
+    patternProperties:
+      "^[a-zA-Z0-9\\-_]+$":
+        type: object
+        properties:
+          temperature:
+            $ref: /schemas/types.yaml#/definitions/uint32
+            description: Trip temperature in millidegree Celsius.
+
+          hysteresis:
+            $ref: /schemas/types.yaml#/definitions/uint32
+            description: Hysteresis value in millidegree Celsius.
+
+          type:
+            $ref: /schemas/types.yaml#/definitions/string
+            description: Trip point type.
+            enum:
+              - active
+              - passive
+              - hot
+              - critical
+
+        required:
+          - temperature
+          - hysteresis
+          - type
+
+        additionalProperties: false
+
+  cooling-maps:
+    type: object
+    description: |
+      Cooling device mappings for trip points.
+    patternProperties:
+      "^map[0-9]+$":
+        type: object
+        properties:
+          trip:
+            $ref: /schemas/types.yaml#/definitions/phandle
+            description: Reference to a trip point.
+
+          cooling-device:
+            $ref: /schemas/types.yaml#/definitions/phandle-array
+            description: |
+              List of cooling devices with min/max cooling states.
+
+          contribution:
+            $ref: /schemas/types.yaml#/definitions/uint32
+            description: |
+              Cooling contribution weight for power allocator governor.
+
+        required:
+          - trip
+          - cooling-device
+
+        additionalProperties: false
+
+required:
+  - compatible
+  - source-thermal-zones
+
+additionalProperties: false
+
+examples:
+  - |
+    // Virtual thermal zone definitions
+    thermal-zones {
+        cpuss-max-step {
+            compatible = "virtual-thermal-zone";
+            source-thermal-zones = "cluster0-thermal", "cluster1-thermal",
+                                   "cpu0-thermal", "cpu1-thermal";
+            calculate = "max";
+            polling-delay-passive = <100>;
+            polling-delay = <1000>;
+            sustainable-power = <1000>;
+            coefficients = <1 0>;
+            thermal-governor = "step_wise";
+
+            trips {
+                cpuss_passive: cpuss-passive {
+                    temperature = <75000>;
+                    hysteresis = <5000>;
+                    type = "passive";
+                };
+
+                cpuss_hot: cpuss-hot {
+                    temperature = <85000>;
+                    hysteresis = <5000>;
+                    type = "hot";
+                };
+
+                cpuss_critical: cpuss-critical {
+                    temperature = <95000>;
+                    hysteresis = <0>;
+                    type = "critical";
+                };
+            };
+
+            cooling-maps {
+                map0 {
+                    trip = <&cpuss_passive>;
+                    cooling-device = <&CPU0 0 4>;
+                    contribution = <1024>;
+                };
+
+                map1 {
+                    trip = <&cpuss_hot>;
+                    cooling-device = <&CPU0 4 8>;
+                    contribution = <2048>;
+                };
+            };
+        };
+
+        gpu-average {
+            compatible = "virtual-thermal-zone";
+            source-thermal-zones = "gpu0-thermal", "gpu1-thermal";
+            calculate = "average";
+            polling-delay-passive = <50>;
+            polling-delay = <500>;
+            thermal-governor = "power_allocator";
+
+            trips {
+                gpu_passive: gpu-passive {
+                    temperature = <70000>;
+                    hysteresis = <3000>;
+                    type = "passive";
+                };
+            };
+
+            cooling-maps {
+                map0 {
+                    trip = <&gpu_passive>;
+                    cooling-device = <&gpu 0 10>;
+                };
+            };
+        };
+
+        // Single-source virtual zone with implicit 'none' calculation method
+        // Useful for adding cooling policies to existing thermal zones
+        // without modifying the original zone definition
+        wifi-virtual {
+            compatible = "virtual-thermal-zone";
+            source-thermal-zones = "wifi-thermal";
+            // calculate defaults to 'none' for single source
+            polling-delay-passive = <100>;
+            polling-delay = <1000>;
+            thermal-governor = "step_wise";
+
+            trips {
+                wifi_alert: wifi-alert {
+                    temperature = <80000>;
+                    hysteresis = <5000>;
+                    type = "passive";
+                };
+            };
+
+            cooling-maps {
+                map0 {
+                    trip = <&wifi_alert>;
+                    cooling-device = <&wifi_cooling 0 3>;
+                };
+            };
+        };
+    };
+

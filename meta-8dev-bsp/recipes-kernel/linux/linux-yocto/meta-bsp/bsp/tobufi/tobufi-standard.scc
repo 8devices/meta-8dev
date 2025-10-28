@@ -9,6 +9,7 @@ kconf hardware cpufreq-gov-performance.cfg
 
 patch enable-qcom-gdsc-for-qcs404-gcc.patch
 patch auto-enable-cpufreq_dt-for-arm_qcom_cpufreq_nvmem.patch
+patch add-generic-virtual-thermal-zones-driver-to-kernel.patch
 patch update-reset-reason-shift-for-pms405-pon.patch
 patch allow-board-variant-override-via-ath11k-module-param.patch
 patch extcon-usb-gpio-add-VBUS-boost-support.patch
