@@ -11,6 +11,10 @@
 / {
 	model = "8devices TobuFi SOM";
 	compatible = "8devices,tobufi", "qcom,qcs405", "qcom,qcs404";
+	/* Platform type, Platformf subtype */
+	qcom,board-id = <0x20 0x0>;
+	/* Chip ID, Chip version */
+	qcom,msm-id = <352 0x10001>;
 
 	aliases {
 		serial0 = &blsp1_uart2;

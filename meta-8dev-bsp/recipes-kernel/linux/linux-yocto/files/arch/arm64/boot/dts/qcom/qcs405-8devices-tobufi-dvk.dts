@@ -12,8 +12,6 @@
 	model = "8devices TobuFi DVK";
 	compatible = "8devices,tobufi-dvk", "8devices,tobufi",
 		     "qcom,qcs405", "qcom,qcs404";
-	qcom,board-id = <0x20 0x0>;
-	qcom,msm-id = <352 0x10001>;
 
 	usb3_extcon: usb3-extcon {
 		compatible = "linux,extcon-usb-gpio";
