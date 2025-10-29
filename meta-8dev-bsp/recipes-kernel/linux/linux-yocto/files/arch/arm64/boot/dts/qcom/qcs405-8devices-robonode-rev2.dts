@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2025 8devices, UAB
+ */
+
+/dts-v1/;
+
+#include "qcs405-8devices-robonode.dts"
+
+/ {
+	/* IOT (0x20) Robonode (0x82) HWrev (2.0) */
+	qcom,board-id = <0x82000220 0x0>;
+};
