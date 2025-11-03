@@ -1,0 +1,75 @@
+From d5362282f5d6136aee3c6265fbe40936c433e0ff Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Giedr=C4=97=20=C5=A0imk=C5=ABnait=C4=97?=
+ <giedre.s@8devices.com>
+Date: Tue, 28 Oct 2025 12:30:21 +0000
+Subject: [PATCH] thermal: add generic virtual thermal zones driver to kernel
+ config
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Upstream-Status: Pending
+Signed-off-by: Giedrė Šimkūnaitė <giedre.s@8devices.com>
+---
+ drivers/thermal/Kconfig  | 32 ++++++++++++++++++++++++++++++++
+ drivers/thermal/Makefile |  1 +
+ 2 files changed, 33 insertions(+)
+
+diff --git a/drivers/thermal/Kconfig b/drivers/thermal/Kconfig
+index c81a00fbca7d..a0adcbb00a2b 100644
+--- a/drivers/thermal/Kconfig
++++ b/drivers/thermal/Kconfig
+@@ -242,6 +242,38 @@ config THERMAL_MMIO
+ 	  register or shared memory, is a potential candidate to work with this
+ 	  driver.
+ 
++config VIRTUAL_THERMAL_ZONES
++	tristate "Generic Virtual Thermal Zones"
++	depends on THERMAL && THERMAL_OF
++	help
++	  This driver creates virtual thermal zones that aggregate temperatures
++	  from one or more physical thermal zones. Virtual zones are useful for
++	  creating composite thermal monitoring points that combine readings
++	  from multiple sensors, or for adding trip points and cooling policies
++	  to existing thermal zones without modifying the original definition.
++
++	  For single-source zones, the driver provides direct pass-through
++	  (no calculation), making it useful for adding custom thermal policies
++	  to existing sensors.
++
++	  For multiple-source zones, the driver supports various temperature
++	  aggregation methods including: maximum, minimum, average, median,
++	  rolling average, and exponential average calculations. Default logic
++	  is 'max' for multiple sources.
++
++	  Virtual thermal zones are configured via device tree nodes with
++	  compatible = "virtual-thermal-zone" and can define their own
++	  trip points and cooling device bindings.
++
++	  This driver can be used on any platform to aggregate sensor
++	  temperatures or create system-wide thermal zones.
++
++	  Say Y here if you want to enable virtual thermal zone support.
++	  If unsure, say N.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called virtual-thermal-zones.
++
+ config HISI_THERMAL
+ 	tristate "Hisilicon thermal driver"
+ 	depends on ARCH_HISI || COMPILE_TEST
+diff --git a/drivers/thermal/Makefile b/drivers/thermal/Makefile
+index c934cab309ae..4ef409c59a6b 100644
+--- a/drivers/thermal/Makefile
++++ b/drivers/thermal/Makefile
+@@ -34,6 +34,7 @@ obj-$(CONFIG_K3_THERMAL)	+= k3_bandgap.o k3_j72xx_bandgap.o
+ # platform thermal drivers
+ obj-y				+= broadcom/
+ obj-$(CONFIG_THERMAL_MMIO)		+= thermal_mmio.o
++obj-$(CONFIG_VIRTUAL_THERMAL_ZONES) += virtual-thermal-zones.o
+ obj-$(CONFIG_SPEAR_THERMAL)	+= spear_thermal.o
+ obj-$(CONFIG_SUN8I_THERMAL)     += sun8i_thermal.o
+ obj-$(CONFIG_ROCKCHIP_THERMAL)	+= rockchip_thermal.o
+-- 
+2.25.1
+
