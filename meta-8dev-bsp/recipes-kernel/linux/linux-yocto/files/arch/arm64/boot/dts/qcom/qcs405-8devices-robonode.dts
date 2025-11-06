@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2025 8Devices UAB
+ * Copyright (c) 2025 8devices, UAB
  */
 
 /dts-v1/;
@@ -13,8 +13,6 @@
 	model = "8devices Robonode";
 	compatible = "8devices,robonode", "8devices,tobufi",
 		     "qcom,qcs405", "qcom,qcs404";
-	qcom,board-id = <0x20 0x0>;
-	qcom,msm-id = <352 0x10001>;
 
 	/* Aliases defines TTY character devices mapping in linux.
 	 * I.e. serial0 stands for ttyMSM0, etc. */
@@ -24,6 +22,57 @@
                 serial2 = &blsp1_uart1;
                 serial3 = &blsp2_uart0;
         };
+
+	gpio-leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio_leds>;
+
+		led@47 {
+			label = "led0";
+			gpios = <&tlmm 47 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "default-on";
+		};
+
+		led@48 {
+			label = "led1";
+			gpios = <&tlmm 48 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "default-on";
+		};
+
+		led@52 {
+			label = "led2";
+			gpios = <&tlmm 52 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "default-on";
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&gpio_keys>;
+		pinctrl-names = "default";
+
+		push@58 {
+			label = "Push Button";
+			linux,code = <BTN_0>;
+			gpios = <&tlmm 58 GPIO_ACTIVE_LOW>;
+		};
+
+		slide@51 {
+			label = "Slide Switch";
+			linux,code = <BTN_1>;
+			gpios = <&tlmm 51 GPIO_ACTIVE_HIGH>;
+		};
+	};
+
+	gpio_fan: gpio-fan {
+		compatible = "gpio-fan";
+		pinctrl-0 = <&gpio_fan_pins>;
+		pinctrl-names = "default";
+		gpios = <&tlmm 39 GPIO_ACTIVE_HIGH>;
+		gpio-fan,speed-map = <0 0>, <1 1>;
+		#cooling-cells = <2>;
+	};
 };
 
 &tlmm {
@@ -135,57 +184,72 @@
 	};
 };
 
-&soc {
-	gpio-leds {
-		compatible = "gpio-leds";
-		pinctrl-names = "default";
-		pinctrl-0 = <&gpio_leds>;
+/* BLSP0, 4-pin connector */
+&blsp1_uart0 {
+	status = "okay";
+};
 
-		led@47 {
-			label = "led0";
-			gpios = <&tlmm 47 GPIO_ACTIVE_HIGH>;
-			linux,default-trigger = "default-on";
-		};
+/* BLSP1, 4-pin connector */
+&blsp1_uart1 {
+	status = "okay";
+};
 
-		led@48 {
-			label = "led1";
-			gpios = <&tlmm 48 GPIO_ACTIVE_HIGH>;
-			linux,default-trigger = "default-on";
-		};
+/* BLSP1, parallel I2C/UART */
+&blsp1_i2c1 {
+	status = "okay";
+};
 
-		led@52 {
-			label = "led2";
-			gpios = <&tlmm 52 GPIO_ACTIVE_HIGH>;
-			linux,default-trigger = "default-on";
-		};
+/* BLSP2, parallel I2C/UART (debug) */
+&blsp1_i2c2 {
+	status = "okay";
+};
+
+&blsp2_dma {
+	qcom,controlled-remotely;
+	status = "okay";
+};
+
+/* BLSP5, 4-pin connector */
+&blsp2_uart0 {
+	status = "okay";
+};
+
+&usb2 {
+	status = "okay";
+	usb@78c0000 {
+		maximum-speed = "high-speed";
+		dr_mode = "peripheral";
 	};
+};
 
-	gpio-keys {
-		compatible = "gpio-keys";
-		pinctrl-0 = <&gpio_keys>;
-		pinctrl-names = "default";
-
-		push@58 {
-			label = "Push Button";
-			linux,code = <BTN_0>;
-			gpios = <&tlmm 58 GPIO_ACTIVE_LOW>;
-		};
-
-		slide@51 {
-			label = "Slide Switch";
-			linux,code = <BTN_1>;
-			gpios = <&tlmm 51 GPIO_ACTIVE_HIGH>;
-		};
+&usb3 {
+	status = "okay";
+	usb@7580000 {
+		phys = <&usb2_phy_prim>;
+		phy-names = "usb2-phy";
+		maximum-speed = "high-speed";
+		dr_mode = "host";
 	};
+};
 
-	gpio_fan: gpio-fan {
-		compatible = "gpio-fan";
-		pinctrl-0 = <&gpio_fan_pins>;
-		pinctrl-names = "default";
-		gpios = <&tlmm 39 GPIO_ACTIVE_HIGH>;
-		gpio-fan,speed-map = <0 0>, <1 1>;
-		#cooling-cells = <2>;
-	};
+&usb2_phy_prim {
+	vdd-supply = <&vreg_l4_1p2>;
+	vdda1p8-supply = <&vreg_l5_1p8>;
+	vdda3p3-supply = <&vreg_l12_3p3>;
+	status = "okay";
+};
+
+&usb2_phy_sec {
+	vdd-supply = <&vreg_l4_1p2>;
+	vdda1p8-supply = <&vreg_l5_1p8>;
+	vdda3p3-supply = <&vreg_l12_3p3>;
+	status = "okay";
+};
+
+&usb3_phy {
+	vdd-supply = <&vreg_l3_1p05>;
+	vdda1p8-supply = <&vreg_l5_1p8>;
+	status = "okay";
 };
 
 &ethernet {
@@ -209,65 +273,6 @@
 			device_type = "ethernet-phy";
 		};
 	};
-};
-
-&blsp1_uart0 {
-	status = "okay";
-};
-
-&blsp1_uart1 {
-	status = "okay";
-};
-
-&blsp1_i2c1 {
-	status = "okay";
-};
-
-&blsp1_i2c2 {
-	status = "okay";
-};
-
-&blsp2_dma {
-	qcom,controlled-remotely;
-	status = "okay";
-};
-
-&blsp2_uart0 {
-	status = "okay";
-};
-
-&usb2 {
-	status = "okay";
-	usb@78c0000 {
-		dr_mode = "peripheral";
-	};
-};
-
-&usb3 {
-	status = "okay";
-	usb@7580000 {
-		dr_mode = "host";
-	};
-};
-
-&usb2_phy_prim {
-	vdd-supply = <&vreg_l4_1p2>;
-	vdda1p8-supply = <&vreg_l5_1p8>;
-	vdda3p3-supply = <&vreg_l12_3p3>;
-	status = "okay";
-};
-
-&usb2_phy_sec {
-	vdd-supply = <&vreg_l4_1p2>;
-	vdda1p8-supply = <&vreg_l5_1p8>;
-	vdda3p3-supply = <&vreg_l12_3p3>;
-	status = "okay";
-};
-
-&usb3_phy {
-	vdd-supply = <&vreg_l3_1p05>;
-	vdda1p8-supply = <&vreg_l5_1p8>;
-	status = "okay";
 };
 
 &{/thermal-zones} {
