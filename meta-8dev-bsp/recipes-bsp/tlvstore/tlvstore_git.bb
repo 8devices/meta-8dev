@@ -54,9 +54,9 @@ do_install() {
 
 do_install:append:tobufi() {
     install -d ${D}${datadir}/tlvs
-    install -m 0755 ${WORKDIR}/8dev-tobufi-store ${D}${datadir}/tlvs
-    install -m 0755 ${WORKDIR}/8dev-tobufi-legacy ${D}${datadir}/tlvs
-    install -m 0755 ${WORKDIR}/8dev-tobufi-initial ${D}${datadir}/tlvs
+    install -m 0644 ${WORKDIR}/8dev-tobufi-store ${D}${datadir}/tlvs
+    install -m 0644 ${WORKDIR}/8dev-tobufi-legacy ${D}${datadir}/tlvs
+    install -m 0644 ${WORKDIR}/8dev-tobufi-initial ${D}${datadir}/tlvs
 }
 
 FILES:${PN} += "${datadir}"
