@@ -78,7 +78,7 @@ def device_verify(devices, serial, state):
         serial = list(devices.keys())[0]
 
     if devices[serial] != state:
-        log_info("Unknown state '{]' for device: {}".format(devicess[serial], serial))
+        print_info("Unknown state '{}' for device: {}".format(devices[serial], serial))
         return False
     return True
 
