@@ -19,9 +19,9 @@ SRC_URI = "\
     file://eeprom-dump.init \
 "
 SRC_URI:append:tobufi = "\
-    file://eeprom-store \
-    file://eeprom-legacy \
-    file://eeprom-legacy-2 \
+    file://8dev-tobufi-store \
+    file://8dev-tobufi-legacy \
+    file://8dev-tobufi-initial \
 "
 SRCREV = "${TLVS_REV}"
 
@@ -54,9 +54,9 @@ do_install() {
 
 do_install:append:tobufi() {
     install -d ${D}${datadir}/tlvs
-    install -m 0755 ${WORKDIR}/eeprom-store ${D}${datadir}/tlvs
-    install -m 0755 ${WORKDIR}/eeprom-legacy ${D}${datadir}/tlvs
-    install -m 0755 ${WORKDIR}/eeprom-legacy-2 ${D}${datadir}/tlvs
+    install -m 0755 ${WORKDIR}/8dev-tobufi-store ${D}${datadir}/tlvs
+    install -m 0755 ${WORKDIR}/8dev-tobufi-legacy ${D}${datadir}/tlvs
+    install -m 0755 ${WORKDIR}/8dev-tobufi-initial ${D}${datadir}/tlvs
 }
 
 FILES:${PN} += "${datadir}"
