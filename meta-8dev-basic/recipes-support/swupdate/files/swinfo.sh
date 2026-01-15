@@ -1,9 +1,7 @@
 #!/bin/sh
 
-serial_no=$(grep -o 'androidboot.serialno=[^ ]*' /proc/cmdline 2>/dev/null | cut -d'=' -f2)
-if [ -n "$serial_no" ]; then
-    echo "Serial Number: $serial_no"
-fi
+# parse S/N, board ID and radio ID
+boardinfo
 
 slot_suffix=$(systemctl show-environment 2>/dev/null | grep "^SLOT_SUFFIX=" | cut -d'=' -f2)
 case "$slot_suffix" in
