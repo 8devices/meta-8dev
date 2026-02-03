@@ -10,6 +10,10 @@ import subprocess
 
 board_partitions = {}
 
+# Default filenames (relative to script directory)
+DEFAULT_BOOT_FILE = 'kernel.img'
+DEFAULT_SYSTEM_FILE = 'rootfs.img'
+
 
 def print_head(msg):
     print("")
@@ -210,17 +214,27 @@ if __name__ == '__main__':
                         help="system rootfs image file ")
     args = parser.parse_args()
 
+    this_dir = os.path.dirname(os.path.realpath(__file__))
+
     artifacts = {}
 
     if args.boot:
         if not os.path.exists(args.boot):
             die(f"Cannot find boot image file: {args.boot}")
         artifacts['boot'] = args.boot
+    else:
+        default_boot = os.path.join(this_dir, DEFAULT_BOOT_FILE)
+        if os.path.exists(default_boot):
+            artifacts['boot'] = default_boot
 
     if args.system:
         if not os.path.exists(args.system):
             die(f"Cannot find system image file: {args.system}")
         artifacts['system'] = args.system
+    else:
+        default_system = os.path.join(this_dir, DEFAULT_SYSTEM_FILE)
+        if os.path.exists(default_system):
+            artifacts['system'] = default_system
 
     if not artifacts:
         die(f"Nothing to do")
