@@ -10,4 +10,7 @@ KERNEL_FEATURES:append:tobufi = "\
     cfg/8dev/squashfs.scc \
 "
 
+# Prevent upstream features/netfilter/netfilter.scc from being included
+KERNEL_EXTRA_FEATURES:tobufi = ""
+
 require recipes-kernel/linux/linux-8dev.inc
