@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "802.1Q VLAN tagging"
+define KFEATURE_COMPATIBILITY all
+
+kconf non-hardware vlan.cfg
