@@ -225,8 +225,6 @@
 &usb3 {
 	status = "okay";
 	usb@7580000 {
-		phys = <&usb2_phy_prim>;
-		phy-names = "usb2-phy";
 		maximum-speed = "high-speed";
 		dr_mode = "host";
 	};
