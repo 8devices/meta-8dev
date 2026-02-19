@@ -1,0 +1,33 @@
+stages:
+  - deploy
+
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+
+deploy-to-github:
+  stage: deploy
+  interruptible: true
+  image:
+    name: alpine/git:latest
+    entrypoint: [""]
+  tags:
+    - generic
+    - shared
+    - docker
+  variables:
+    GIT_DEPTH: 0
+    GIT_STRATEGY: clone
+  before_script:
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - eval "$(ssh-agent -s)"
+    - chmod 600 "$GITHUB_SSH_KEY"
+    - ssh-add "$GITHUB_SSH_KEY"
+    - ssh-keyscan github.com >> ~/.ssh/known_hosts
+  script:
+    - git remote add github git@github.com:8devices/meta-8dev.git || true
+    - git push github origin/$CI_DEFAULT_BRANCH:refs/heads/$CI_DEFAULT_BRANCH
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+      allow_failure: true
