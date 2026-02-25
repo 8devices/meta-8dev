@@ -23,6 +23,8 @@
 		compatible = "linux,extcon-usb-gpio";
 		id-gpio = <&tlmm 116 GPIO_ACTIVE_HIGH>;
 		vbus-out-gpio = <&tlmm 81 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb3_id_pin &usb3_vbus_boost>;
 	};
 };
 
@@ -94,8 +96,8 @@
 	usb3_id_pin: usb3-id-state {
 		pins = "gpio116";
 		function = "gpio";
-		bias-pull-up;
-		drive-strength = <2>;
+		bias-disable;
+		input-enable;
 	};
 
 	usb3_vbus_boost: usb3-vbus-boost {
@@ -108,8 +110,9 @@
 	usb2_vbus_boost: usb2-vbus-boost {
 		pins = "gpio80";
 		function = "gpio";
-		bias-pull-down;
+		bias-disable;
 		drive-strength = <8>;
+		output-high;
 	};
 };
 
@@ -153,6 +156,8 @@
 
 &usb2 {
 	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&usb2_vbus_boost>;
 	usb@78c0000 {
 		dr_mode = "peripheral";
 	};
