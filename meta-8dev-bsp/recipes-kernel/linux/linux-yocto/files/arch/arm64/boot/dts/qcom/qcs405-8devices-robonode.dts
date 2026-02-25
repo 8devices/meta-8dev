@@ -6,6 +6,7 @@
 /dts-v1/;
 
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/leds/common.h>
 #include "qcs405-8devices-tobufi.dtsi"
 
@@ -97,13 +98,6 @@
 			output-low;
 		};
 
-		phy-intr-pins {
-			pins = "gpio105";
-			function = "rgmii_int";
-			bias-pull-up;
-			drive-strength = <2>;
-		};
-
 		rx-ck-pins {
 			pins = "gpio69";
 			function = "rgmii_ck";
@@ -145,6 +139,13 @@
 			bias-pull-up;
 			drive-strength = <16>;
 		};
+	};
+
+	phy_int_default: phy-int-default-state {
+		pins = "gpio105";
+		function = "gpio";
+		bias-disable;
+		input-enable;
 	};
 
 	gpio_leds: gpio-leds-pins {
@@ -269,6 +270,10 @@
 			compatible = "ethernet-phy-ieee802.3-c22";
 			reg = <0x0>;
 			device_type = "ethernet-phy";
+			interrupt-parent = <&tlmm>;
+			interrupts = <105 IRQ_TYPE_LEVEL_LOW>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&phy_int_default>;
 			vddio-supply = <&vddio>;
 			vddio: vddio-regulator {
 				regulator-min-microvolt = <1800000>;
