@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2026 8devices, UAB
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/interrupt-controller/irq.h>
+#include "qcs405-8devices-tobufi-dvk.dts"
+
+/ {
+	/* IOT (0x20) TobuFi-DVK (0x81) HWrev (5.0) */
+	qcom,board-id = <0x81000520 0x0>;
+
+	aliases {
+		serial0 = &blsp1_uart2;
+		serial1 = &blsp1_uart0;
+		serial2 = &blsp1_uart1;
+		serial3 = &blsp2_uart0;
+	};
+};
+
+&ethernet_default {
+	phy-intr-pins {
+		pins = "gpio61";
+		function = "rgmii_int";
+		bias-disable;
+		input-enable;
+	};
+};
+
+/* BLSP0, 4-pin connector */
+&blsp1_uart0 {
+	status = "okay";
+};
+
+&ethernet {
+	mdio {
+		phy0: phy@0 {
+			interrupt-parent = <&tlmm>;
+			interrupts = <61 IRQ_TYPE_LEVEL_LOW>;
+		};
+	};
+};
