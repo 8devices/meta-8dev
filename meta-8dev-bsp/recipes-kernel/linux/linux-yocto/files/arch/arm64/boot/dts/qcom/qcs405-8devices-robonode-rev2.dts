@@ -9,7 +9,7 @@
 
 / {
 	/* IOT (0x20) Robonode (0x82) HWrev (2.0) */
-	qcom,board-id = <0x82000220 0x0>;
+	qcom,board-id = <0x82020020 0x0>;
 
 	usb2_extcon: usb2-extcon {
 		compatible = "linux,extcon-usb-gpio";

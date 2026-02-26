@@ -9,5 +9,5 @@
 
 / {
 	/* IOT (0x20) TobuFi-DVK (0x81) HWrev (3.0) */
-	qcom,board-id = <0x81000320 0x0>;
+	qcom,board-id = <0x81030020 0x0>;
 };
