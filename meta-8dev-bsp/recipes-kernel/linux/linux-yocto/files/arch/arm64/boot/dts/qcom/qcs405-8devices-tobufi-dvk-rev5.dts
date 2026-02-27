@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2025 8devices, UAB
+ * Copyright (c) 2026 8devices, UAB
  */
 
 /dts-v1/;
@@ -9,8 +9,8 @@
 #include "qcs405-8devices-tobufi-dvk.dts"
 
 / {
-	/* IOT (0x20) TobuFi-DVK (0x81) HWrev (4.0) */
-	qcom,board-id = <0x81040020 0x0>;
+	/* IOT (0x20) TobuFi-DVK (0x81) HWrev (5.0) */
+	qcom,board-id = <0x81050020 0x0>;
 
 	aliases {
 		serial0 = &blsp1_uart2;
@@ -20,10 +20,10 @@
 	};
 };
 
-&tlmm {
-	phy_int_default: phy-int-default-state {
-		pins = "gpio105";
-		function = "gpio";
+&ethernet_default {
+	phy-intr-pins {
+		pins = "gpio61";
+		function = "rgmii_int";
 		bias-disable;
 		input-enable;
 	};
@@ -38,9 +38,7 @@
 	mdio {
 		phy0: phy@0 {
 			interrupt-parent = <&tlmm>;
-			interrupts = <105 IRQ_TYPE_LEVEL_LOW>;
-			pinctrl-names = "default";
-			pinctrl-0 = <&phy_int_default>;
+			interrupts = <61 IRQ_TYPE_LEVEL_LOW>;
 		};
 	};
 };

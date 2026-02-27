@@ -15,10 +15,10 @@ get_board_id() {
 
 	echo -n "Board name: "
 	case $BOARD_ID in
-		81000320) echo "TobuFi-DVK rev3.0" ;;
-		81000420) echo "TobuFi-DVK rev4.0" ;;
-		81000520) echo "TobuFi-DVK rev5.0" ;;
-		82000220) echo "Robonode rev2.0" ;;
+		81030020) echo "TobuFi-DVK rev3.0" ;;
+		81040020) echo "TobuFi-DVK rev4.0" ;;
+		81050020) echo "TobuFi-DVK rev5.0" ;;
+		82020020) echo "Robonode rev2.0" ;;
 		*) echo "TobuFi generic" ;;
 	esac
 }

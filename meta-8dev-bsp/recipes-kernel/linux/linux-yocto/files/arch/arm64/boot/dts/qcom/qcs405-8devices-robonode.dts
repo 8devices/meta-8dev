@@ -6,6 +6,7 @@
 /dts-v1/;
 
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/leds/common.h>
 #include "qcs405-8devices-tobufi.dtsi"
 
@@ -97,13 +98,6 @@
 			output-low;
 		};
 
-		phy-intr-pins {
-			pins = "gpio105";
-			function = "rgmii_int";
-			bias-pull-up;
-			drive-strength = <2>;
-		};
-
 		rx-ck-pins {
 			pins = "gpio69";
 			function = "rgmii_ck";
@@ -147,6 +141,13 @@
 		};
 	};
 
+	phy_int_default: phy-int-default-state {
+		pins = "gpio105";
+		function = "gpio";
+		bias-disable;
+		input-enable;
+	};
+
 	gpio_leds: gpio-leds-pins {
 		pins = "gpio47", "gpio48", "gpio52";
 		function = "gpio";
@@ -172,15 +173,19 @@
 	usb3_vbus_boost: usb3-vbus-boost {
 		pins = "gpio16";
 		function = "gpio";
-		bias-pull-down;
+		bias-disable;
 		drive-strength = <8>;
+		/* Host mode, VBUS power force ON */
+		output-low;
 	};
 
 	usb2_vbus_boost: usb2-vbus-boost {
 		pins = "gpio15";
 		function = "gpio";
-		bias-pull-down;
+		bias-disable;
 		drive-strength = <8>;
+		/* Peripheral mode, VBUS power force OFF */
+		output-high;
 	};
 };
 
@@ -216,6 +221,8 @@
 
 &usb2 {
 	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&usb2_vbus_boost>;
 	usb@78c0000 {
 		maximum-speed = "high-speed";
 		dr_mode = "peripheral";
@@ -224,6 +231,8 @@
 
 &usb3 {
 	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&usb3_vbus_boost>;
 	usb@7580000 {
 		maximum-speed = "high-speed";
 		dr_mode = "host";
@@ -269,6 +278,10 @@
 			compatible = "ethernet-phy-ieee802.3-c22";
 			reg = <0x0>;
 			device_type = "ethernet-phy";
+			interrupt-parent = <&tlmm>;
+			interrupts = <105 IRQ_TYPE_LEVEL_LOW>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&phy_int_default>;
 			vddio-supply = <&vddio>;
 			vddio: vddio-regulator {
 				regulator-min-microvolt = <1800000>;

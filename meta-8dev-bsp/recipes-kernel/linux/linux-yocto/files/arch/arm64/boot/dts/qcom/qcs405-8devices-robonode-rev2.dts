@@ -9,5 +9,35 @@
 
 / {
 	/* IOT (0x20) Robonode (0x82) HWrev (2.0) */
-	qcom,board-id = <0x82000220 0x0>;
+	qcom,board-id = <0x82020020 0x0>;
+
+	usb2_extcon: usb2-extcon {
+		compatible = "linux,extcon-usb-gpio";
+		id-gpio = <&tlmm 14 GPIO_ACTIVE_HIGH>;
+		vbus-out-gpio = <&tlmm 15 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb2_id_pin &usb2_vbus_boost>;
+	};
+};
+
+&tlmm {
+	usb2_id_pin: usb2-id-state {
+		pins = "gpio14";
+		function = "gpio";
+		bias-disable;
+		input-enable;
+	};
+};
+
+&usb2_vbus_boost {
+	/delete-property/ output-high;
+};
+
+&usb2 {
+	/delete-property/ pinctrl-names;
+	/delete-property/ pinctrl-0;
+	usb@78c0000 {
+		dr_mode = "otg";
+		extcon = <&usb2_extcon>;
+	};
 };
