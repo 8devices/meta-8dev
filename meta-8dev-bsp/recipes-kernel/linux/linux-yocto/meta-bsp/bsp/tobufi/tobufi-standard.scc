@@ -24,6 +24,7 @@ include bsp/qcs405/usb.scc
 include bsp/qcs405/bluetooth.scc
 include bsp/tobufi/som.scc
 include bsp/tobufi/gpio-fan.scc
+include cfg/8dev/gpio.scc
 
 # --- Patches ---
 patch patches/enable-qcom-gdsc-for-qcs404-gcc.patch
