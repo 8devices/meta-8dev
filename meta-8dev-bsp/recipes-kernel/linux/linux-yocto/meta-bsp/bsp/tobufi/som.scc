@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "TobuFi SoM hardware (PCB peripherals)"
+define KFEATURE_COMPATIBILITY board
+
+kconf hardware eeprom.cfg
+kconf non-hardware cpufreq-gov-performance.cfg
+
+include bsp/tobufi/qcn9074.scc

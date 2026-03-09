@@ -4,16 +4,34 @@ define KTYPE standard
 define KARCH arm64
 define KMETA_EXTERNAL_BSP t
 
-kconf hardware tobufi-standard.cfg
-kconf hardware cpufreq-gov-performance.cfg
-kconf hardware enable-gpio-fan-thermal-control.cfg
-kconf hardware enable-ath-country-code-change.cfg
+include ktypes/8dev/standard.scc
 
-patch enable-qcom-gdsc-for-qcs404-gcc.patch
-patch auto-enable-cpufreq_dt-for-arm_qcom_cpufreq_nvmem.patch
-patch add-generic-virtual-thermal-zones-driver-to-kernel.patch
-patch update-reset-reason-shift-for-pms405-pon.patch
-patch allow-board-variant-override-via-ath11k-module-param.patch
-patch extcon-usb-gpio-add-VBUS-boost-support.patch
-patch allow-MAC-addr-override-via-module-params.patch
-patch msm-serial-add-additional-2-uart-ports.patch
+# --- Upstream HW feature includes ---
+include features/power/arm.scc
+include features/mmc/mmc-block.scc
+include features/i2c/i2c.scc
+include features/spi/spi.scc
+include features/pwm/pwm.scc
+include features/pci/pci.scc
+include features/usb/xhci-hcd.scc
+include cfg/timer/rtc.scc
+
+# --- BSP hardware ---
+include bsp/qcs405/soc.scc
+include bsp/qcs405/ethernet.scc
+include bsp/qcs405/wcn39xx.scc
+include bsp/qcs405/usb.scc
+include bsp/qcs405/bluetooth.scc
+include bsp/tobufi/som.scc
+include bsp/tobufi/gpio-fan.scc
+include cfg/8dev/gpio.scc
+
+# --- Patches ---
+patch patches/enable-qcom-gdsc-for-qcs404-gcc.patch
+patch patches/update-reset-reason-shift-for-pms405-pon.patch
+patch patches/auto-enable-cpufreq_dt-for-arm_qcom_cpufreq_nvmem.patch
+patch patches/add-generic-virtual-thermal-zones-driver-to-kernel.patch
+patch patches/extcon-usb-gpio-add-VBUS-boost-support.patch
+patch patches/msm-serial-add-additional-2-uart-ports.patch
+patch patches/allow-board-variant-override-via-ath11k-module-param.patch
+patch patches/allow-MAC-addr-override-via-module-params.patch

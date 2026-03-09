@@ -6,6 +6,10 @@
 
 # List of 8devices advertised/supported IMAGE_FEATURES
 #
+# - system-debug        - lightweight system debugging tools (strace, no gdb)
+#
+FEATURE_PACKAGES_system-debug = "packagegroup-system-debug"
+#
 # - network-debug       - network debugging tools
 #
 FEATURE_PACKAGES_network-debug = "packagegroup-network-debug"

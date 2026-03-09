@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "QCS404 WCN3990 WiFi (ATH10K SNOC)"
+define KFEATURE_COMPATIBILITY all
+
+kconf hardware wcn39xx.cfg
