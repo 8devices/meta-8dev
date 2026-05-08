@@ -11,3 +11,5 @@ do_kernel_checkout:append:tobufi() {
         cp -r ${WORKDIR}/files/* ${S}
     fi
 }
+
+require ${THISDIR}/kernel-android.inc
