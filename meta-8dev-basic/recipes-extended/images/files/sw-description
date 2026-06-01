@@ -15,7 +15,7 @@ software =
                                         installed-directly = true;
                                 },
                                 {
-                                        filename = "aImage.gz";
+                                        filename = "boot-@@MACHINE@@.img";
                                         device = "/dev/disk/by-partlabel/boot_a";
                                         type = "raw";
                                         installed-directly = true;
@@ -37,7 +37,7 @@ software =
                                         installed-directly = true;
                                 },
                                 {
-                                        filename = "aImage.gz";
+                                        filename = "boot-@@MACHINE@@.img";
                                         device = "/dev/disk/by-partlabel/boot_b";
                                         type = "raw";
                                         installed-directly = true;
