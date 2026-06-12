@@ -1,0 +1,22 @@
+From f5200585fc970bd54ce16bd947d5f0d166368630 Mon Sep 17 00:00:00 2001
+From: Justinas Grauslis <justinas@8devices.com>
+Date: Thu, 11 Jun 2026 18:12:56 +0300
+Subject: [PATCH] search upper case marker
+
+---
+ bootctrl_impl.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bootctrl_impl.cpp b/bootctrl_impl.cpp
+index 59fcc7d..826fcbe 100644
+--- a/bootctrl_impl.cpp
++++ b/bootctrl_impl.cpp
+@@ -41,7 +41,7 @@
+ #define BOOTDEV_DIR	  "/dev/disk/by-partlabel"
+ #define BOOT_IMG_PTN_NAME "boot_"
+ #define LUN_NAME_END_LOC  14
+-#define BOOT_SLOT_PROP	  "slot_suffix"
++#define BOOT_SLOT_PROP	  "SLOT_SUFFIX"
+ 
+ #define MAX_CMDLINE_SIZE  4096
+ 
