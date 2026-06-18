@@ -1,12 +1,12 @@
 [Unit]
-Description=Board initialization
+Description=Board configuration
 DefaultDependencies=no
 After=local-fs.target
 Before=sysinit.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/share/board-init/board-init.sh
+ExecStart=/usr/sbin/board-init
 
 [Install]
 WantedBy=sysinit.target

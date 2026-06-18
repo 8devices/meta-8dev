@@ -18,4 +18,4 @@ FEATURE_PACKAGES_network-debug = "packagegroup-network-debug"
 #
 FEATURE_PACKAGES_update-tools = "packagegroup-update-tools"
 
-CORE_IMAGE_EXTRA_INSTALL += "board-init"
+CORE_IMAGE_EXTRA_INSTALL += "board-conf"
