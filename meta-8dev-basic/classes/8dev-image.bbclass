@@ -17,3 +17,5 @@ FEATURE_PACKAGES_network-debug = "packagegroup-network-debug"
 # - update-tools        - update & related tools
 #
 FEATURE_PACKAGES_update-tools = "packagegroup-update-tools"
+
+CORE_IMAGE_EXTRA_INSTALL += "board-conf radio-conf"
