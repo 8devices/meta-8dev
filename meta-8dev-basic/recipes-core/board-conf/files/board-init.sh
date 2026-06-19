@@ -1,6 +1,8 @@
 #!/bin/sh
 EXE_TAG="$(basename "$0")[$$]"
 
+[ -s /etc/board ] && exit 0
+
 eval $(DUMP=1 boardinfo 2>/dev/null)
 
 if [ -z "$BOARD" ]; then
@@ -8,7 +10,7 @@ if [ -z "$BOARD" ]; then
 	exit 0
 fi
 
-echo "$BOARD" > /run/board
+echo "$BOARD" > /etc/board
 
 hostname "$BOARD"
 echo "$BOARD" > /etc/hostname
