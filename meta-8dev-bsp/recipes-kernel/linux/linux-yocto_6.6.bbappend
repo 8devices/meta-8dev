@@ -1,4 +1,5 @@
-COMPATIBLE_MACHINE:tobufi = "^(tobufi|tobufi-dvk|robonode)$"
+# :qcs40x outranks meta-qcom's COMPATIBLE_MACHINE:qcom
+COMPATIBLE_MACHINE:qcs40x = "^(tobufi|tobufi-dvk|robonode)$"
 KBRANCH:tobufi ?= "v6.6/standard/base"
 KMACHINE:tobufi ?= "tobufi"
 
