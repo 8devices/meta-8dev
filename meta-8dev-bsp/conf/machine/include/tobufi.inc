@@ -1,7 +1,10 @@
 require conf/machine/include/qcom-qcs40x.inc
 include conf/machine/include/tobufi-extras.inc
 
-MACHINEOVERRIDES =. "tobufi:"
+# Add "tobufi" as a sub-family level so it lands between SOC_FAMILY (qcom/qcs40x)
+# and ${MACHINE} in OVERRIDES: :tobufi outranks the SOC overrides but the
+# machine's own override still wins.
+SOC_FAMILY .= ":tobufi"
 
 MACHINE_FEATURES += "wifi"
 
