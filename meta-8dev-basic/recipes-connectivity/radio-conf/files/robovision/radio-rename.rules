@@ -1,0 +1,8 @@
+# The QCN9274 is a split-radio module: two PHYs (phy0, phy1) on one PCIe
+# function. Name the netdevs deterministically by PHY index - wlan0=phy0,
+# wlan1=phy1 - so the mapping is stable. The previous rule only assigned wlan0
+# and used a /run flag guard, so on this dual-PHY device both netdevs raced onto
+# wlan0 (the second failed with "File exists" and the wlan<->phy mapping was
+# order-dependent). The PROGRAM reads the PHY index through the phy80211 symlink.
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="wlan*", ENV{ID_PATH}=="platform-1c08000.pcie-pci-0001:01:00.0", \
+	PROGRAM="/bin/sh -c 'cat /sys%p/phy80211/index'", NAME="wlan%c"
