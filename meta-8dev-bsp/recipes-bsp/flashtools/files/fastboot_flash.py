@@ -5,14 +5,11 @@ import sys
 import os
 import time
 import re
+import json
 import argparse
 import subprocess
 
 board_partitions = {}
-
-# Default filenames (relative to script directory)
-DEFAULT_BOOT_FILE = 'kernel.img'
-DEFAULT_SYSTEM_FILE = 'rootfs.img'
 
 
 def print_head(msg):
@@ -184,7 +181,7 @@ def fastboot_fetch(serial=None):
     return board_partitions
 
 
-def check_partitions(partitions, artifacts):
+def print_partitions(partitions, artifacts):
     for part_name in sorted(artifacts.keys()):
         file_name = artifacts[part_name]
         print(" {} | {:<10} | {} ".format('Y' if part_name in partitions else 'N', part_name, file_name))
@@ -192,10 +189,12 @@ def check_partitions(partitions, artifacts):
 
 def flash_parts(artifacts, serial=None):
     parts = fastboot_fetch(serial)
-    print_head("Flashing partitions")
-    check_partitions(parts, artifacts)
+    if parts:
+        print_head("Flashing partitions")
+        print_partitions(parts, artifacts)
     for part_name, part_file in artifacts.items():
-        if part_name not in parts:
+        if parts and (part_name not in parts):
+            print_warn(f"Skipping not advertized partition: {part_name}")
             continue
 
         fastboot_flash(part_name, part_file, serial)
@@ -207,37 +206,21 @@ if __name__ == '__main__':
                         help="device serial number")
     parser.add_argument('-s', '--stay', dest='stay', action='store_true',
                         help="stay / do not reboot after operation")
-    group_parts = parser.add_argument_group('flash partitions')
-    group_parts.add_argument('--boot', '--linux', dest='boot',
-                        help="linux boot image file")
-    group_parts.add_argument('--system', '--rootfs', dest='system',
-                        help="system rootfs image file ")
     args = parser.parse_args()
 
     this_dir = os.path.dirname(os.path.realpath(__file__))
 
-    artifacts = {}
-
-    if args.boot:
-        if not os.path.exists(args.boot):
-            die(f"Cannot find boot image file: {args.boot}")
-        artifacts['boot'] = args.boot
-    else:
-        default_boot = os.path.join(this_dir, DEFAULT_BOOT_FILE)
-        if os.path.exists(default_boot):
-            artifacts['boot'] = default_boot
-
-    if args.system:
-        if not os.path.exists(args.system):
-            die(f"Cannot find system image file: {args.system}")
-        artifacts['system'] = args.system
-    else:
-        default_system = os.path.join(this_dir, DEFAULT_SYSTEM_FILE)
-        if os.path.exists(default_system):
-            artifacts['system'] = default_system
+    flash_map_path = os.path.join(this_dir, 'fastboot.json')
+    try:
+        with open(flash_map_path) as f:
+            artifacts = json.load(f)
+    except OSError:
+        die(f"Cannot find flash map: {flash_map_path}")
+    except json.JSONDecodeError as e:
+        die(f"Invalid flash map {flash_map_path}: {e}")
 
     if not artifacts:
-        die(f"Nothing to do")
+        die(f"Flash map is empty: {flash_map_path}")
 
     fastboot_enter(args.serial)
 
