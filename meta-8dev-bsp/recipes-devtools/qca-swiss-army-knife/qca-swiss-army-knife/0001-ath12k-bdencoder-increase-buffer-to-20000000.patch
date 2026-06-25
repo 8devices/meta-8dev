@@ -1,0 +1,22 @@
+From d9d5b96e2c7aa9a1d6e73edea951dbd41a53da9b Mon Sep 17 00:00:00 2001
+From: Justinas Grauslis <justinas@8devices.com>
+Date: Thu, 4 Jun 2026 10:43:25 +0300
+Subject: [PATCH] ath12k bdencoder increase buffer to 20000000
+
+---
+ tools/scripts/ath12k/ath12k-bdencoder | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tools/scripts/ath12k/ath12k-bdencoder b/tools/scripts/ath12k/ath12k-bdencoder
+index 9f3091d..02a87f3 100755
+--- a/tools/scripts/ath12k/ath12k-bdencoder
++++ b/tools/scripts/ath12k/ath12k-bdencoder
+@@ -31,7 +31,7 @@ import logging
+ import sys
+ import shutil
+ 
+-MAX_BUF_LEN = 2000000
++MAX_BUF_LEN = 20000000
+ 
+ # the signature length also includes null byte and padding
+ ATH12K_BOARD_SIGNATURE = b"QCA-ATH12K-BOARD"
