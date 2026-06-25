@@ -1,0 +1,4 @@
+manufacturer=8devices
+model=Citron
+serial="$(cat /sys/devices/soc0/serial_number)"
+usb_addr="a600000.usb"
