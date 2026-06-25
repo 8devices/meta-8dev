@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Justinas Grauslis <justinas@8devices.com>
+Date: Thu, 18 Jun 2026 22:00:00 +0300
+Subject: [PATCH] kconfiglib: accept the 'transitional' Kconfig keyword
+
+Linux 6.16+ adds the 'transitional' keyword to the Kconfig language (e.g.
+"config CFI_CLANG" in arch/Kconfig). The kconfiglib bundled with this
+kern-tools predates it, so symbol_why.py (run by the kernel's
+do_kernel_configcheck) aborts with
+
+  KconfigError: arch/Kconfig:945: error: couldn't parse 'transitional': syntax error
+
+when parsing a 6.18 kernel's Kconfig tree. Recognise 'transitional' as a
+value-less property and ignore it (no semantics are needed for config
+auditing), so the tree parses again.
+
+Upstream-Status: Pending
+---
+--- a/Kconfiglib/kconfiglib.py
++++ b/Kconfiglib/kconfiglib.py
+@@ -3286,6 +3286,13 @@
+ 
+                 node.item.is_optional = True
+ 
++            elif t0 is _T_TRANSITIONAL:
++                # Linux 6.16+ Kconfig: marks a symbol as transitional (a
++                # rename/migration helper, e.g. config CFI_CLANG). It carries no
++                # value and needs no semantics for config auditing - accept and
++                # ignore so parsing of the kernel's Kconfig tree succeeds.
++                pass
++
+             else:
+                 # Reuse the tokens for the non-property line later
+                 self._reuse_tokens = True
+@@ -6916,7 +6923,8 @@
+     _T_TRISTATE,
+     _T_UNEQUAL,
+     _T_VISIBLE,
+-) = range(1, 51)
++    _T_TRANSITIONAL,
++) = range(1, 52)
+ 
+ # Keyword to token map, with the get() method assigned directly as a small
+ # optimization
+@@ -6964,6 +6972,7 @@
+     "string":         _T_STRING,
+     "tristate":       _T_TRISTATE,
+     "visible":        _T_VISIBLE,
++    "transitional":   _T_TRANSITIONAL,
+ }.get
+ 
+ # The constants below match the value of the corresponding tokens to remove the
