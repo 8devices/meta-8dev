@@ -1,0 +1,9 @@
+active_slot=$(grep -o 'root=PARTLABEL=system_[ab]' /proc/cmdline | cut -d '_' -f2)
+
+if [ "$active_slot" = "a" ]; then
+    selection='stable,b'
+else
+    selection='stable,a'
+fi
+
+SWUPDATE_ARGS="-H @MACHINE@:0.0 -e ${selection} -f /etc/swupdate.cfg"
