@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MIT
+define KTYPE standard
+
+include ktypes/base/base.scc
+
+# Core subsystems
+include features/firmware/firmware.scc
+include features/hrt/hrt.scc
+include features/cgroups/cgroups.scc
+include features/rfkill/rfkill.scc
+include features/bpf/bpf.scc
+include features/kfence/kfence.scc
+include features/input/input.scc
+include features/wifi/wifi-common.scc
+
+# Core cfg fragments
+include cfg/fs/devtmpfs.scc
+include cfg/fs/debugfs.scc
+include cfg/debug/printk/debug-dynamic-debug.scc
+include cfg/timer/no_hz.scc
+include cfg/crypto-obsolete-disable.scc
+include cfg/tracing.scc
+
+# base.cfg overrides + inline configs
+kconf non-hardware standard.cfg

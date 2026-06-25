@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+define KMACHINE robovision
+define KTYPE standard
+define KARCH arm64
+define KMETA_EXTERNAL_BSP t
+
+include bsp/citron/citron-standard.scc
+
+include bsp/robovision/usb-phy.scc
+include bsp/robovision/rtl8139.scc
+include bsp/robovision/qcn9274.scc

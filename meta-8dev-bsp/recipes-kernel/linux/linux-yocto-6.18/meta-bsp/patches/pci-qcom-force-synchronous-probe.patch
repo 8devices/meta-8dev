@@ -1,0 +1,36 @@
+From f1507b5bd0b8f01117805981b435bd29515b0e5b Mon Sep 17 00:00:00 2001
+From: Justinas Grauslis <justinas@8devices.com>
+Date: Mon, 8 Jun 2026 22:33:04 +0300
+Subject: [PATCH] QCLINUX: PCI: qcom: force synchronous probe
+
+The qcom-pcie controller probes with PROBE_PREFER_ASYNCHRONOUS. On
+robovision the pcie0 leg has RTL8111K NICs whose r8169 probe registers
+an MDIO bus; the bus scan makes phylib issue a synchronous request_module()
+for the PHY driver, and doing that from the controller's async-probe worker
+trips WARN_ON_ONCE(wait && current_is_async()) in __request_module() (benign,
+but noisy in the boot log).
+
+Force synchronous probe so PCIe enumeration no longer runs in an async worker,
+eliminating the warning. Trade-off: PCIe controller bring-up + downstream
+enumeration runs on the boot critical path rather than in parallel, for both
+PCIe controllers.
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -2066,7 +2066,16 @@
+ 		.suppress_bind_attrs = true,
+ 		.of_match_table = qcom_pcie_match,
+ 		.pm = &qcom_pcie_pm_ops,
+-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
++		/*
++		 * 8devices: force synchronous probe. The async probe worker is
++		 * the context that makes phylib's synchronous request_module()
++		 * (during the r8169 MDIO bus scan on the pcie0 switch leg) trip
++		 * the WARN_ON_ONCE(wait && current_is_async()) in __request_module.
++		 * Probing synchronously removes that async context. Trade-off:
++		 * PCIe controller bring-up + enumeration runs on the boot critical
++		 * path instead of in parallel (affects both pcie0 and pcie1).
++		 */
++		.probe_type = PROBE_FORCE_SYNCHRONOUS,
+ 	},
+ };
+ builtin_platform_driver(qcom_pcie_driver);

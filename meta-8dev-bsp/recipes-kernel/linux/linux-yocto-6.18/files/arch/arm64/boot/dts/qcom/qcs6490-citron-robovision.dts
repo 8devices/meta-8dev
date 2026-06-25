@@ -1,0 +1,270 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+/dts-v1/;
+
+#include "qcs6490-citron.dtsi"
+
+/ {
+	model = "8Devices Robonode Vision";
+	compatible = "8devices,robovision", "8devices,citron",
+		"qcom,qcm6490";
+
+	/*
+	 * Read by the Qualcomm bootloader DTB selector (not Linux) to pick this
+	 * DTB for the running hardware. msm-id = <soc-id soc-rev>: the Kodiak SoC
+	 * family (475 SM, 497 QCM, 498 QCS, 515 SM-LTE) 6490, rev >= 1.0.
+	 * board-id = <0x00PMPmPH subtype>: hw-platform 0x20, version 1.1, subtype 2.
+	 * Must match what the CDT (citron_cdt.bin) reports or the DTB is skipped.
+	 */
+	qcom,msm-id = <497 0x10000>, <498 0x10000>, <475 0x10000>, <515 0x10000>;
+	qcom,board-id = <0x010120 2>;
+};
+
+/*
+ * USB roles are FIXED on this carrier, not OTG: there is no usable USB_ID/CC path
+ * to the SoC, so role detection can't work. Each port is pinned to one role.
+ * USB0 = device (matches the bootrom/bootloader EDL+fastboot device-mode path,
+ * +5V held off), USB1 = host (+5V always on). VBUS load switches are driven by
+ * fixed GPIO levels: GPIO52 USB0_PWR_SW low, GPIO53 USB1_PWR_SW high.
+ */
+
+/* USB0 = SoC usb_1 (a600000): fixed device/gadget. +5V source held off, no ID. */
+&usb_1 {
+	dr_mode = "peripheral";
+};
+
+/*
+ * No Type-C mux / pmic-glink on this carrier and the SS lanes arrive at a fixed
+ * orientation, so delete the orientation-switch left at the sc7280 default.
+ */
+&usb_1_qmpphy {
+	/delete-property/ orientation-switch;
+};
+
+/*
+ * USB1 = SoC usb_2 (8c00000): fixed HOST, HS PHY only (USB 2.0). +5V is always on
+ * via usb1_vbus below. Enable the controller + HS PHY (disabled by default in
+ * sc7280). Drop the default usb-role-switch (targets the disabled EUD debugger);
+ * its port node stays since eud_ep references it by phandle.
+ */
+&usb_2 {
+	dr_mode = "host";
+	/delete-property/ usb-role-switch;
+	status = "okay";
+};
+
+&usb_2_hsphy {
+	vdda-pll-supply = <&vreg_l10c_0p88>;
+	vdda18-supply = <&vreg_l1c_1p8>;
+	vdda33-supply = <&vreg_l2b_3p072>;
+	status = "okay";
+};
+
+/*
+ * USB VBUS PWR_EN pins for the UCS2113 load switch, held at fixed levels via the
+ * regulators below: GPIO52 (USB0) low => 5V off (usb0_vbus left unenabled),
+ * GPIO53 (USB1) high => 5V on (usb1_vbus always-on).
+ */
+&tlmm {
+	/* GPIO52 = USB0_PWR_SW (held low / 5V off). */
+	usb0_vbus_en_state: usb0-vbus-en-state {
+		pins = "gpio52";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	/* GPIO53 = USB1_PWR_SW (held high / 5V on). */
+	usb1_vbus_en_state: usb1-vbus-en-state {
+		pins = "gpio53";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+};
+
+/ {
+	usb0_vbus: regulator-usb0-vbus {
+		compatible = "regulator-fixed";
+		regulator-name = "USB0_VBUS";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&tlmm 52 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb0_vbus_en_state>;
+	};
+
+	usb1_vbus: regulator-usb1-vbus {
+		compatible = "regulator-fixed";
+		regulator-name = "USB1_VBUS";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&tlmm 53 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-always-on;
+		regulator-boot-on;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb1_vbus_en_state>;
+	};
+};
+
+/*
+ * On-carrier I2C EEPROM: ST M24256E-FMC6TG (32 KB) on i2c11 (GPIO44 SDA, GPIO45
+ * SCL; pinmux from sc7280). GPIO46 = WC write-protect via the at24 wp-gpios.
+ * Main 32 KB array at 0x50; the "-F" 64-byte write-lockable page at 0x58 is not
+ * instantiated.
+ */
+
+/*
+ * QUP wrapper 1 hosts i2c11 (EEPROM) and uart10/uart12; disabled by default in
+ * sc7280, enable it or the OF core won't instantiate its children.
+ * firmware-name is required: the GENI driver loads per-SE firmware from the
+ * wrapper node for any SE the bootloader left unprogrammed (all of QUP1). Without
+ * it i2c11/uart10/uart12 fail to probe (-EINVAL).
+ */
+&qupv3_id_1 {
+	firmware-name = "qcom/qcs6490/qupv3fw.elf";
+	status = "okay";
+};
+
+&i2c11 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	eeprom@50 {
+		compatible = "atmel,24c256";
+		reg = <0x50>;
+		pagesize = <64>;
+		wp-gpios = <&tlmm 46 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&eeprom_wc_state>;
+	};
+};
+
+&tlmm {
+	/* GPIO46 = EEPROM WC: GPIO output, used as the at24 write-protect line. */
+	eeprom_wc_state: eeprom-wc-state {
+		pins = "gpio46";
+		function = "gpio";
+		bias-disable;
+	};
+};
+
+/*
+ * Five extra 4-wire GENI UARTs (CTS/RFR/TX/RX) exposed on the carrier; pinmux is
+ * in sc7280, the nodes just default to disabled. uart1/3/4 are on QUP0 (enabled
+ * by default), uart10/uart12 on QUP1 (enabled above). Pin map (CTS, RFR, TX, RX):
+ *   uart1  (QUP0 SE1) : gpio4-7
+ *   uart3  (QUP0 SE3) : gpio12-15
+ *   uart4  (QUP0 SE4) : gpio16-19
+ *   uart10 (QUP1 SE2) : gpio40-43
+ *   uart12 (QUP1 SE4) : gpio48-51
+ */
+&uart1 {
+	status = "okay";
+};
+
+&uart3 {
+	status = "okay";
+};
+
+&uart4 {
+	status = "okay";
+};
+
+&uart10 {
+	status = "okay";
+};
+
+/*
+ * uart12 uses GPIO48-51, freed from gpio-reserved-ranges in the SOM dtsi. This
+ * REQUIRES the matching XBL/TZ release of those pins; without it the board hangs
+ * at gpiochip bringup (see the note in qcs6490-citron.dtsi).
+ */
+&uart12 {
+	status = "okay";
+};
+
+/*
+ * PCIe1 (dual-lane) -> on-carrier QCN9274 Wi-Fi (ath12k). pcie1_phy + supplies
+ * are enabled in the SOM dtsi; enable the controller and wire its board signals
+ * (GPIO79 CLKREQ, GPIO80 WAKE, GPIO81 PERST). The QCN9274 needs no endpoint node.
+ * No regulator/clock node: its rails are hardware-sequenced off +5V0 and the
+ * refclk is the SoC's internal PCIE1_REFCLK, so only PERST/WAKE/CLKREQ are wired.
+ */
+&tlmm {
+	pcie1_reset_n: pcie1-reset-n-state {
+		pins = "gpio81";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-disable;
+	};
+
+	pcie1_wake_n: pcie1-wake-n-state {
+		pins = "gpio80";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+};
+
+&pcie1 {
+	perst-gpios = <&tlmm 81 GPIO_ACTIVE_LOW>;
+	wake-gpios = <&tlmm 80 GPIO_ACTIVE_HIGH>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pcie1_reset_n>, <&pcie1_wake_n>, <&pcie1_clkreq_n>;
+	status = "okay";
+};
+
+/*
+ * PCIe0 (single lane) -> on-carrier PI7C9X2G304EV PCIe switch.
+ *
+ * Topology: SoC RC --(PCIe0 x1)--> PI7C9X2G304EV upstream port (port 0)
+ *                                    |-- downstream port 1 --> RTL8111K Ethernet
+ *                                    `-- downstream port 2 --> RTL8111K Ethernet
+ *
+ * pcie0_phy + supplies are enabled in the SOM dtsi; enable the controller and
+ * wire only the upstream signals the SoC drives: PERST (GPIO86) and CLKREQ
+ * (GPIO88). iommu-map is overridden below for the switch topology. The switch and
+ * both NICs auto-enumerate (r8169 -> two net interfaces), no child nodes needed.
+ * WAKE is not wired: the downstream WAKE# nets are per-NIC PME signals, not the
+ * upstream link wake, and aren't needed for enumeration.
+ */
+&tlmm {
+	pcie0_reset_n: pcie0-reset-n-state {
+		pins = "gpio86";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-disable;
+	};
+};
+
+&pcie0 {
+	perst-gpios = <&tlmm 86 GPIO_ACTIVE_LOW>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pcie0_reset_n>, <&pcie0_clkreq_n>;
+
+	/*
+	 * IOMMU stream-ID map for the PI7C9X2G304 switch topology.
+	 *
+	 * The stock sc7280 map assumes one endpoint, so the two RTL8111K NICs
+	 * behind the switch get the fallback SID 0x1c00 with no domain -> arm-smmu
+	 * "Format=2 TF" faults, AER storm, dead/unstable eth. Per-device SIDs don't
+	 * work either: assigning 0x1c02 makes qcom_smmu_write_s2cr() take a sync
+	 * external abort at attach (secure-world/hyp rejecting the stream).
+	 *
+	 * The switch has no ACS, so Linux puts every pcie0 device in one iommu
+	 * group anyway. Collapse all RIDs onto the known-good 0x1c00 with
+	 * iommu-map-mask = <0x0> - one SME/S2CR reused for all, no 0x1c02 abort.
+	 * Confirmed on hardware: removes both the s2cr abort and the TF faults. (A
+	 * separate pre-existing AER RxErr/UnsupReq storm remains, unrelated to the
+	 * IOMMU.)
+	 */
+	iommu-map = <0x0 &apps_smmu 0x1c00 0x1>;
+	iommu-map-mask = <0x0>;
+
+	status = "okay";
+};

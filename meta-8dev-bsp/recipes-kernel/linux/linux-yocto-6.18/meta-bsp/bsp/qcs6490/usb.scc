@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "QCS6490 USB DWC3 dual-role controller"
+define KFEATURE_COMPATIBILITY all
+
+kconf hardware usb.cfg

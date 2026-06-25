@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "USB PHYs (SNPS femto HS + ULPI)"
+define KFEATURE_COMPATIBILITY board
+
+kconf hardware usb-phy.cfg
