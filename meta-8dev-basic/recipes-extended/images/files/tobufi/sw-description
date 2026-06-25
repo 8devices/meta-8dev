@@ -1,0 +1,54 @@
+software =
+{
+        version = "@@DISTRO_VERSION@@";
+        description = "Software update for @@MACHINE@@ device";
+
+        hardware-compatibility = [ "#RE:^0\.[0-9]+$" ];
+
+        stable = {
+                a: {
+                        images: (
+                                {
+                                        filename = "8dev-image-base-@@MACHINE@@.rootfs.ext4";
+                                        device = "/dev/disk/by-partlabel/system_a";
+                                        type = "raw";
+                                        installed-directly = true;
+                                },
+                                {
+                                        filename = "boot-@@MACHINE@@.img";
+                                        device = "/dev/disk/by-partlabel/boot_a";
+                                        type = "raw";
+                                        installed-directly = true;
+                                }
+                        );
+                        scripts: (
+                                {
+                                        filename = "change_boot_slot.sh";
+                                        type = "postinstall";
+                                }
+                        );
+                };
+                b: {
+                        images: (
+                                {
+                                        filename = "8dev-image-base-@@MACHINE@@.rootfs.ext4";
+                                        device = "/dev/disk/by-partlabel/system_b";
+                                        type = "raw";
+                                        installed-directly = true;
+                                },
+                                {
+                                        filename = "boot-@@MACHINE@@.img";
+                                        device = "/dev/disk/by-partlabel/boot_b";
+                                        type = "raw";
+                                        installed-directly = true;
+                                }
+                        );
+                        scripts: (
+                                {
+                                        filename = "change_boot_slot.sh";
+                                        type = "postinstall";
+                                }
+                        );
+                };
+        };
+}
