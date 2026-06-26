@@ -1,0 +1,599 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Justinas Grauslis <justinas@8devices.com>
+Date: Tue, 16 Jun 2026 17:00:00 +0300
+Subject: [PATCH] citron: support attribute-based A/B slot scheme
+
+The Citron / robovision board does not use the Android A/B layout that
+qbootctl was written for. It boots from the ESP (no boot_a/boot_b image), has
+no androidboot 'slot_suffix' on the kernel cmdline, and only the dtb, efi and
+system partition pairs carry the GPT slot-select attribute. eMMC is mmcblk1,
+not mmcblk0. Out of the box qbootctl mis-detected the storage type, scanned
+A/B pairs that are never provisioned here, could not tell which slot is
+running, and aborted set-active with "Both A & B are inactive". This adapts it
+to the board's simplified, attribute-only A/B scheme:
+
+* Storage detection: treat any /dev/mmcblk* as eMMC, not only mmcblk0, so the
+  eMMC GPT code path (not the UFS bsg path) is used.
+
+* Managed partition set: restrict AB_PTN_LIST to "dtb", "efi", "system" - the
+  only pairs that carry slot attributes here - so set-active and the mark
+  bootable/successful/unbootable ops don't walk (and abort on) unprovisioned
+  pairs.
+
+* Slot-reference base: replace the hard-coded "boot" base with a lookup that
+  prefers "dtb" (dtb_a/dtb_b) and falls back to "efi" when the dtb pair is
+  absent or carries no slot-select attribute; used by get_number_slots(),
+  get_boot_attr() and is_slot_marked_successful().
+
+* Current slot: try slot_suffix first; when it is absent (this platform),
+  derive the slot from the rootfs partition's GPT label on the kernel cmdline,
+  e.g. root=PARTLABEL=system_a (or system_b). "current slot" stays sourced from
+  the cmdline (the running slot) while "active slot" stays sourced from the GPT
+  attribute, so the two can legitimately diverge if the bootloader fell back to
+  the other slot. get_current_slot() now returns int and yields -1 when the
+  running slot cannot be determined from the cmdline (instead of guessing 0).
+
+* Active boot slot: an all-zero active attribute is a valid uninitialised state
+  (first boot, before any set-active), not an error. get_active_boot_slot() now
+  returns int: the active slot index, -1 when no slot is marked active, or a
+  negative error from the lower layer on a hard fault (no GPT / missing
+  partition labels - still logged there). It no longer prints "Failed to find
+  the active boot slot" nor defaults to slot 0 for the uninitialised case.
+
+* CLI output: the getCurrentSlot/getActiveBootSlot HAL pointers (and the test
+  stubs) return int to carry the -1 "undetermined / none" result. Every
+  slot-reporting message prints a human slot name - "a"/"b" (the partition
+  suffix without the leading underscore) or "none" when undetermined - via the
+  slot_name() helper in qbootctl and the matching slot_letter() helper for the
+  in-library mark_boot_successful / set-active messages. So the dump shows
+  Active:0 on every slot and "-a"/"-c" print "Active slot: none" /
+  "Current slot: none" rather than a bogus letter. The raw "_a"/"_b" suffix is
+  kept internal to partition naming.
+
+* Drop the -x ("get the slot suffix") CLI option: remove it from the usage
+  text and the getopt string so it is neither advertised nor parsed.
+
+* set-active: when an attribute-only pair has both _a and _b clear, don't abort
+  - assume the current slot (or slot 0 if the running slot is undetermined) and
+  write the requested target. This is the bootstrap path that lets the GPT
+  active attribute be provisioned the first time (upstream aborted, leaving
+  set-active permanently unusable here); it does not change behaviour once a
+  slot is already active. Also fixes the missing newline on the old message.
+
+* Demote "Couldn't find cmdline arg" to the debug log: it is expected here
+  (no slot_suffix) and handled by the fallback, so it shouldn't spam normal
+  output.
+
+Signed-off-by: Justinas Grauslis <justinas@8devices.com>
+---
+diff --git a/bootctrl.h b/bootctrl.h
+index 03da69b..f0d0159 100644
+--- a/bootctrl.h
++++ b/bootctrl.h
+@@ -35,9 +35,10 @@ struct boot_control_module {
+      * without any risk of corruption.
+      * The returned value is always guaranteed to be strictly less than the
+      * value returned by getNumberSlots. Slots start at 0 and
+-     * finish at getNumberSlots() - 1
++     * finish at getNumberSlots() - 1. Returns -1 if the running slot cannot
++     * be determined from the kernel cmdline.
+      */
+-    unsigned (*getCurrentSlot)();
++    int (*getCurrentSlot)();
+ 
+     /*
+      * (*markBootSuccessful)() marks the specified slot
+@@ -93,8 +94,10 @@ struct boot_control_module {
+      * Returns the active slot to boot into on the next boot. If
+      * setActiveBootSlot() has been called, the getter function should return
+      * the same slot as the one provided in the last setActiveBootSlot() call.
++     * Returns -1 if no slot is marked active (a valid uninitialised state,
++     * e.g. first boot before any set-active), and -errno on hard error.
+      */
+-    unsigned (*getActiveBootSlot)();
++    int (*getActiveBootSlot)();
+ };
+ 
+ extern const struct boot_control_module bootctl;
+diff --git a/bootctrl_impl.cpp b/bootctrl_impl.cpp
+index 59fcc7d..4b01e30 100644
+--- a/bootctrl_impl.cpp
++++ b/bootctrl_impl.cpp
+@@ -83,7 +83,9 @@ void get_kernel_cmdline_arg(const char *arg, char *buf, const char *def)
+ 	close(fd);
+ 	found = strstr(pcmd, arg);
+ 	if (!found || !(val = strstr(found, "="))) {
+-		fprintf(stderr, "Couldn't find cmdline arg: '%s'\n", arg);
++		/* Not an error: callers fall back to the supplied default (and, for
++		 * slot_suffix, to root= parsing). Keep it debug-only to avoid noise. */
++		LOGD("Couldn't find cmdline arg: '%s'\n", arg);
+ 		goto error;
+ 	}
+ 
+@@ -264,11 +266,56 @@ error:
+ 	return -1;
+ }
+ 
++static const char *get_slot_ptn_base(void)
++{
++	/*
++	 * Slot-reference partition base. This platform has no Android boot_a/_b,
++	 * so prefer "dtb" (dtb_a/dtb_b) and fall back to "efi" (efi_a/efi_b) when
++	 * the dtb pair is absent OR carries no slot-select attribute (the active
++	 * bit is clear on both dtb_a and dtb_b, i.e. attr left at zero). Returns
++	 * the first base whose active bit is set; otherwise the last existing
++	 * pair; NULL only when neither pair exists.
++	 */
++	static const char *const candidates[] = { "dtb", "efi", NULL };
++	const char *fallback = NULL;
++	char path[PATH_MAX];
++	char part[MAX_GPT_NAME_SIZE + 1];
++	struct stat st;
++	unsigned i;
++
++	for (i = 0; candidates[i] != NULL; i++) {
++		snprintf(path, sizeof(path), "%s/%s%s", BOOTDEV_DIR,
++			 candidates[i], AB_SLOT_A_SUFFIX);
++		if (stat(path, &st) != 0)
++			continue;
++		/* Pair exists - remember it (last existing wins as fallback). */
++		fallback = candidates[i];
++		/* Prefer a base that actually encodes the active slot. */
++		snprintf(part, sizeof(part), "%s%s", candidates[i],
++			 AB_SLOT_A_SUFFIX);
++		if (get_partition_attribute(part, ATTR_SLOT_ACTIVE) == 1)
++			return candidates[i];
++		snprintf(part, sizeof(part), "%s%s", candidates[i],
++			 AB_SLOT_B_SUFFIX);
++		if (get_partition_attribute(part, ATTR_SLOT_ACTIVE) == 1)
++			return candidates[i];
++	}
++	return fallback;
++}
++
+ unsigned get_number_slots()
+ {
+ 	struct dirent *de = NULL;
+ 	DIR *dir_bootdev = NULL;
+ 	unsigned slot_count = 0;
++	const char *base = get_slot_ptn_base();
++	char ptn_prefix[MAX_GPT_NAME_SIZE];
++	char ptn_aging[MAX_GPT_NAME_SIZE];
++
++	if (!base)
++		return 0;
++	snprintf(ptn_prefix, sizeof(ptn_prefix), "%s_", base);
++	snprintf(ptn_aging, sizeof(ptn_aging), "%s_aging", base);
+ 
+ 	dir_bootdev = opendir(BOOTDEV_DIR);
+ 	if (!dir_bootdev) {
+@@ -283,10 +330,10 @@ unsigned get_number_slots()
+ 			      "Breaking change to slot A suffix");
+ 		static_assert(AB_SLOT_B_SUFFIX[0] == '_',
+ 			      "Breaking change to slot B suffix");
+-		if (!strncmp(de->d_name, BOOT_IMG_PTN_NAME,
+-			     strlen(BOOT_IMG_PTN_NAME)) &&
+-		    !!strncmp(de->d_name, "boot_aging\n",
+-			      strlen("boot_aging"))) {
++		if (!strncmp(de->d_name, ptn_prefix,
++			     strlen(ptn_prefix)) &&
++		    !!strncmp(de->d_name, ptn_aging,
++			      strlen(ptn_aging))) {
+ 			slot_count++;
+ 		}
+ 	}
+@@ -298,36 +345,40 @@ error:
+ 	return 0;
+ }
+ 
+-static unsigned int get_current_slot()
++static int get_current_slot()
+ {
+ 	uint32_t num_slots = 0;
+ 	char bootSlotProp[MAX_CMDLINE_SIZE] = { '\0' };
++	char rootArg[MAX_CMDLINE_SIZE] = { '\0' };
++	char want[32];
+ 	unsigned i = 0;
+ 	num_slots = get_number_slots();
+ 	if (num_slots <= 1) {
+ 		//Slot 0 is the only slot around.
+ 		return 0;
+ 	}
+-	get_kernel_cmdline_arg(BOOT_SLOT_PROP, bootSlotProp, "_a");
+-	if (!strncmp(bootSlotProp, "N/A\n", strlen("N/A"))) {
+-		fprintf(stderr, "%s: Unable to read boot slot property\n",
+-			__func__);
+-		goto error;
++
++	//Preferred: androidboot-style 'slot_suffix' on the kernel cmdline.
++	get_kernel_cmdline_arg(BOOT_SLOT_PROP, bootSlotProp, "");
++	for (i = 0; slot_suffix_arr[i] != NULL; i++) {
++		if (bootSlotProp[0] &&
++		    !strncmp(bootSlotProp, slot_suffix_arr[i],
++			     strlen(slot_suffix_arr[i])))
++			return i;
+ 	}
+-	//Iterate through a list of partitons named as boot+suffix
+-	//and see which one is currently active.
++
++	//No slot_suffix on this platform - derive the current slot from the
++	//rootfs partition's GPT label, e.g. root=PARTLABEL=system_a (or _b).
++	get_kernel_cmdline_arg("root=", rootArg, "");
+ 	for (i = 0; slot_suffix_arr[i] != NULL; i++) {
+-		if (!strncmp(bootSlotProp, slot_suffix_arr[i],
+-			     strlen(slot_suffix_arr[i]))) {
+-			//printf("%s current_slot = %d\n", __func__, i);
++		snprintf(want, sizeof(want), "PARTLABEL=system%s", slot_suffix_arr[i]);
++		if (strstr(rootArg, want))
+ 			return i;
+-		}
+ 	}
+-error:
+-	//The HAL spec requires that we return a number between
+-	//0 to num_slots - 1. Since something went wrong here we
+-	//are just going to return the default slot.
+-	return 0;
++
++	//Nothing on the cmdline identifies the running slot - report it as
++	//undetermined (-1) rather than guessing the first slot.
++	return -1;
+ }
+ 
+ static int boot_control_check_slot_sanity(unsigned slot)
+@@ -343,13 +394,18 @@ static int boot_control_check_slot_sanity(unsigned slot)
+ int get_boot_attr(unsigned slot, enum part_attr_type attr)
+ {
+ 	char bootPartition[MAX_GPT_NAME_SIZE + 1] = { 0 };
++	const char *base = get_slot_ptn_base();
+ 
+ 	if (boot_control_check_slot_sanity(slot) != 0) {
+ 		fprintf(stderr, "%s: Argument check failed\n", __func__);
+ 		return -1;
+ 	}
+-	snprintf(bootPartition, sizeof(bootPartition) - 1, "boot%s",
+-		 slot_suffix_arr[slot]);
++	if (!base) {
++		fprintf(stderr, "%s: no boot/efi A/B partitions found\n", __func__);
++		return -1;
++	}
++	snprintf(bootPartition, sizeof(bootPartition) - 1, "%s%s",
++		 base, slot_suffix_arr[slot]);
+ 
+ 	return get_partition_attribute(bootPartition, attr);
+ }
+@@ -364,6 +420,16 @@ int is_slot_bootable(unsigned slot)
+ 	return -1;
+ }
+ 
++//Slot letter ("a"/"b") for user-facing messages - the suffix without the
++//leading underscore. The full "_a"/"_b" (slot_suffix_arr) stays in use for
++//partition-name construction.
++static const char *slot_letter(unsigned slot)
++{
++	const char *s = slot_suffix_arr[slot];
++
++	return (s && s[0] == '_') ? s + 1 : s;
++}
++
+ int mark_boot_successful(unsigned slot)
+ {
+ 	int successful = get_boot_attr(slot, ATTR_BOOT_SUCCESSFUL);
+@@ -371,13 +437,13 @@ int mark_boot_successful(unsigned slot)
+ 	if (!is_slot_bootable(slot)) {
+ 		printf("SLOT %s: was marked unbootable, fixing this"
+ 		       " (I hope you know what you're doing...)\n",
+-		       slot_suffix_arr[slot]);
++		       slot_letter(slot));
+ 		update_slot_attribute(slot_suffix_arr[slot], ATTR_BOOTABLE);
+ 	}
+ 
+ 	if (successful) {
+ 		fprintf(stderr, "SLOT %s: already marked successful\n",
+-			slot_suffix_arr[slot]);
++			slot_letter(slot));
+ 		return 0;
+ 	}
+ 
+@@ -388,7 +454,7 @@ int mark_boot_successful(unsigned slot)
+ 	return 0;
+ error:
+ 	fprintf(stderr, "SLOT %s: Failed to mark boot successful\n",
+-		slot_suffix_arr[slot]);
++		slot_letter(slot));
+ 	return -1;
+ }
+ 
+@@ -526,8 +592,34 @@ static int boot_ctl_set_active_slot_for_partitions(vector<string> part_list,
+ 			memcpy((void *)inactive_guid, (const void *)pentryA,
+ 			       TYPE_GUID_SIZE);
+ 		} else {
+-			fprintf(stderr, "Both A & B are inactive..Aborting");
+-			goto error;
++			/*
++			 * Neither slot carries the active attribute. This board
++			 * selects the boot slot by GPT attribute and a freshly
++			 * provisioned (attribute-only) pair can legitimately have
++			 * both _a and _b clear, so do NOT abort - that left
++			 * set-active permanently broken. Assume the current slot
++			 * is the active one so the requested target can still be
++			 * written; if the running slot is undetermined, default to
++			 * slot 0 (_a).
++			 */
++			int cur = get_current_slot();
++			if (cur < 0)
++				cur = 0;
++			fprintf(stderr,
++				"%s: %s_a/%s_b both inactive, assuming current slot %s\n",
++				__func__, prefix.c_str(), prefix.c_str(),
++				slot_letter(cur));
++			if (cur == 1) {
++				memcpy((void *)active_guid,
++				       (const void *)pentryB, TYPE_GUID_SIZE);
++				memcpy((void *)inactive_guid,
++				       (const void *)pentryA, TYPE_GUID_SIZE);
++			} else {
++				memcpy((void *)active_guid,
++				       (const void *)pentryA, TYPE_GUID_SIZE);
++				memcpy((void *)inactive_guid,
++				       (const void *)pentryB, TYPE_GUID_SIZE);
++			}
+ 		}
+ 		// printf("\tActive GUID: %s\n", active_guid);
+ 		// printf("\tInactive GUID: %s\n", active_guid);
+@@ -578,7 +670,7 @@ error:
+ 	return -1;
+ }
+ 
+-unsigned get_active_boot_slot()
++int get_active_boot_slot()
+ {
+ 	uint32_t num_slots = get_number_slots();
+ 	if (num_slots <= 1) {
+@@ -587,12 +679,19 @@ unsigned get_active_boot_slot()
+ 	}
+ 
+ 	for (uint32_t i = 0; i < num_slots; i++) {
+-		if (get_boot_attr(i, ATTR_SLOT_ACTIVE))
++		int attr = get_boot_attr(i, ATTR_SLOT_ACTIVE);
++		if (attr < 0)
++			return attr;	//hard error (no GPT / partitions); already logged
++		if (attr)
+ 			return i;
+ 	}
+ 
+-	fprintf(stderr, "%s: Failed to find the active boot slot\n", __func__);
+-	return 0;
++	/*
++	 * No slot carries the active attribute. That is a valid, uninitialised
++	 * state (e.g. first boot, before any set-active) - not an error - so do
++	 * not log anything and report "no active slot" (-1) to the caller.
++	 */
++	return -1;
+ }
+ 
+ int set_active_boot_slot(unsigned slot)
+@@ -703,13 +802,16 @@ int is_slot_marked_successful(unsigned slot)
+ {
+ 	int attr = 0;
+ 	char bootPartition[MAX_GPT_NAME_SIZE + 1] = { 0 };
++	const char *base = get_slot_ptn_base();
+ 
+ 	if (boot_control_check_slot_sanity(slot) != 0) {
+ 		fprintf(stderr, "%s: Argument check failed\n", __func__);
+ 		goto error;
+ 	}
+-	snprintf(bootPartition, sizeof(bootPartition) - 1, "boot%s",
+-		 slot_suffix_arr[slot]);
++	if (!base)
++		goto error;
++	snprintf(bootPartition, sizeof(bootPartition) - 1, "%s%s",
++		 base, slot_suffix_arr[slot]);
+ 	attr = get_partition_attribute(bootPartition, ATTR_BOOT_SUCCESSFUL);
+ 	LOGD("%s: slot = %d, attr = 0x%x\n", __func__, slot, attr);
+ 	if (attr >= 0)
+diff --git a/bootctrl_test.cpp b/bootctrl_test.cpp
+index 284f5cf..00f27eb 100644
+--- a/bootctrl_test.cpp
++++ b/bootctrl_test.cpp
+@@ -37,9 +37,9 @@ static struct test_state state = {
+ 	}
+ };
+ 
+-unsigned test_get_current_slot()
++int test_get_current_slot()
+ {
+-	return (unsigned int)state.slots[1].active;
++	return (int)state.slots[1].active;
+ }
+ 
+ int test_mark_boot_successful(unsigned slot)
+@@ -79,7 +79,7 @@ int test_is_slot_marked_successful(unsigned slot)
+ 	return 1;
+ }
+ 
+-unsigned test_get_active_boot_slot()
++int test_get_active_boot_slot()
+ {
+ 	return 0;
+ }
+diff --git a/gpt-utils.cpp b/gpt-utils.cpp
+index b913d42..91ea29f 100644
+--- a/gpt-utils.cpp
++++ b/gpt-utils.cpp
+@@ -785,14 +785,16 @@ error:
+ //Determine whether to handle the given partition as eMMC or UFS, using the
+ //name of the backing device.
+ //
+-//Note: In undefined cases (i.e. /dev/mmcblk1 and unresolvable), this function
+-//will tend to prefer UFS behavior. If it incorrectly reports this, then the
+-//program should exit (e.g. by failing) before making any changes.
++//Note: matches any /dev/mmcblk* device as eMMC; UFS resolves to /dev/sd*.
++//In unresolvable cases this returns false (UFS behavior) and the caller
++//should fail before making changes.
+ bool gpt_utils_is_partition_backed_by_emmc(const char *part) {
+ 	char devpath[PATH_MAX] = { '\0' };
+ 
+ 	if (get_dev_path_from_partition_name(part, devpath, sizeof(devpath)))
+ 		return false;
+ 
+-	return !strcmp(devpath, EMMC_DEVICE);
++	/* Any eMMC block device (mmcblk0, mmcblk1, ...) - not just mmcblk0 -
++	 * is eMMC-backed. UFS partitions resolve to /dev/sd* instead. */
++	return !strncmp(devpath, "/dev/mmcblk", strlen("/dev/mmcblk"));
+ }
+diff --git a/gpt-utils.h b/gpt-utils.h
+index f153012..1e478c9 100644
+--- a/gpt-utils.h
++++ b/gpt-utils.h
+@@ -80,9 +80,14 @@ extern "C" {
+ 		"hyp", "keymaster", "msadp", "qupfw", "storsec", "tz",         \
+ 		"vbmeta", "vbmeta_system", "xbl_config"
+ 
+-#define AB_PTN_LIST                                                            \
+-	PTN_SWAP_LIST, "boot", "system", "vendor", "modem", "system_ext",      \
+-		"product"
++/*
++ * 8devices: on this platform only dtb, efi and system carry the GPT slot-select
++ * attributes. Restrict the managed A/B partition set to those three, so
++ * set-active and the mark bootable/successful/unbootable ops do not walk - and
++ * abort on ("Both A & B are inactive") - the other A/B pairs whose slot
++ * attributes are never provisioned here.
++ */
++#define AB_PTN_LIST	"dtb", "efi", "system"
+ #define BOOT_DEV_DIR  "/dev/disk/by-partlabel"
+ 
+ #define EMMC_DEVICE "/dev/mmcblk0"
+diff --git a/qbootctl.cpp b/qbootctl.cpp
+index 3559e29..d7ab549 100644
+--- a/qbootctl.cpp
++++ b/qbootctl.cpp
+@@ -80,7 +80,7 @@ int usage()
+ {
+ 	fprintf(stderr, "qbootctl: qcom bootctrl HAL port for Linux\n");
+ 	fprintf(stderr, "-------------------------------------------\n");
+-	fprintf(stderr, "qbootctl [-c|-m|-s|-u|-b|-n|-x] [SLOT]\n\n");
++	fprintf(stderr, "qbootctl [-c|-m|-s|-u|-b|-n] [SLOT]\n\n");
+ 	fprintf(stderr, "    <no args>        dump slot info (default)\n");
+ 	fprintf(stderr, "    -h               this help text\n");
+ 	fprintf(stderr, "    -c               get the current slot\n");
+@@ -89,8 +89,6 @@ int usage()
+ 		"    -b SLOT          check if SLOT is marked as bootable\n");
+ 	fprintf(stderr,
+ 		"    -n SLOT          check if SLOT is marked as successful\n");
+-	fprintf(stderr,
+-		"    -x [SLOT]        get the slot suffix for SLOT (default: current)\n");
+ 	fprintf(stderr, "    -s SLOT          set to active slot to SLOT\n");
+ 	fprintf(stderr,
+ 		"    -m [SLOT]        mark a boot as successful (default: current)\n");
+@@ -100,12 +98,31 @@ int usage()
+ 	return 1;
+ }
+ 
++/*
++ * Human-readable slot name for output: "a"/"b" (the partition suffix without
++ * the leading underscore), or "none" when the slot is undetermined (slot < 0)
++ * or otherwise invalid. The raw "_a"/"_b" suffix stays internal to partition
++ * naming; only the displayed name is shortened.
++ */
++static const char *slot_name(int slot)
++{
++	const char *s = (slot >= 0) ? impl->getSuffix(slot) : NULL;
++
++	if (!s)
++		return "none";
++	return (s[0] == '_') ? s + 1 : s;
++}
++
+ int get_slot_info(struct slot_info *slots)
+ {
+ 	int rc;
+-	uint32_t active_slot = impl->getActiveBootSlot();
++	int active_slot = impl->getActiveBootSlot();
+ 
+-	slots[active_slot].active = true;
++	//A negative result means no slot is marked active (valid first-boot
++	//state) - leave every slot's active flag at 0 rather than defaulting
++	//one to true.
++	if (active_slot >= 0)
++		slots[active_slot].active = true;
+ 
+ 	for (size_t i = 0; i < 2; i++) {
+ 		rc = impl->isSlotMarkedSuccessful(i);
+@@ -128,10 +145,9 @@ void dump_info()
+ 
+ 	get_slot_info(slots);
+ 
+-	printf("Current slot: %s\n",
+-	       current_slot >= 0 ? impl->getSuffix(current_slot) : "N/A");
++	printf("Current slot: %s\n", slot_name(current_slot));
+ 	for (size_t i = 0; i < 2; i++) {
+-		printf("SLOT %s:\n", impl->getSuffix(i));
++		printf("SLOT %s:\n", slot_name(i));
+ 		printf("\tActive      : %d\n", slots[i].active);
+ 		printf("\tSuccessful  : %d\n", slots[i].successful);
+ 		printf("\tBootable    : %d\n", slots[i].bootable);
+@@ -170,54 +186,51 @@ int main(int argc, char **argv)
+ 	if (slot < 0)
+ 		slot = impl->getCurrentSlot();
+ 
+-	optflag = getopt(argc, argv, "hcmas:ub:n:x");
++	optflag = getopt(argc, argv, "hcmas:ub:n:");
+ 
+ 	switch (optflag) {
+ 	case 'c':
+ 		slot = impl->getCurrentSlot();
+-		printf("Current slot: %s\n", impl->getSuffix(slot));
++		printf("Current slot: %s\n", slot_name(slot));
+ 		return 0;
+ 	case 'a':
+ 		slot = impl->getActiveBootSlot();
+-		printf("Active slot: %s\n", impl->getSuffix(slot));
++		printf("Active slot: %s\n", slot_name(slot));
+ 		return 0;
+ 	case 'b':
+-		printf("SLOT %s: is %smarked bootable\n", impl->getSuffix(slot),
++		printf("SLOT %s: is %smarked bootable\n", slot_name(slot),
+ 		       impl->isSlotBootable(slot) == 1 ? "" : "not ");
+ 		return 0;
+ 	case 'n':
+ 		printf("SLOT %s: is %smarked successful\n",
+-		       impl->getSuffix(slot),
++		       slot_name(slot),
+ 		       impl->isSlotMarkedSuccessful(slot) == 1 ? "" : "not ");
+ 		return 0;
+-	case 'x':
+-		printf("%s\n", impl->getSuffix(slot));
+-		return 0;
+ 	case 's':
+ 		rc = impl->setActiveBootSlot(slot);
+ 		if (rc < 0) {
+ 			fprintf(stderr, "SLOT %s: Failed to set active\n",
+-				impl->getSuffix(slot));
++				slot_name(slot));
+ 			return 1;
+ 		}
+-		printf("SLOT %d: Set as active slot\n", slot);
++		printf("SLOT %s: Set as active slot\n", slot_name(slot));
+ 		return 0;
+ 	case 'm':
+ 		rc = impl->markBootSuccessful(slot);
+ 		if (rc < 0)
+ 			return 1;
+ 		printf("SLOT %s: Marked boot successful\n",
+-		       impl->getSuffix(slot));
++		       slot_name(slot));
+ 		return 0;
+ 	case 'u':
+ 		rc = impl->setSlotAsUnbootable(slot);
+ 		if (rc < 0) {
+ 			fprintf(stderr,
+ 				"SLOT %s: Failed to set as unbootable\n",
+-				impl->getSuffix(slot));
++				slot_name(slot));
+ 			return 1;
+ 		}
+-		printf("SLOT %s: Set as unbootable\n", impl->getSuffix(slot));
++		printf("SLOT %s: Set as unbootable\n", slot_name(slot));
+ 		return 0;
+ 	case 'h':
+ 	default:

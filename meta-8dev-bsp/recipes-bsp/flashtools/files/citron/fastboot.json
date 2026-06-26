@@ -1,0 +1,8 @@
+{
+	"dtb_a": "dtb.bin",
+	"dtb_b": "dtb.bin",
+	"efi_a": "efi.bin",
+	"efi_b": "efi.bin",
+	"system_a": "system.img",
+	"system_b": "system.img"
+}

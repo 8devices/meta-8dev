@@ -1,0 +1,72 @@
+software =
+{
+        version = "@@DISTRO_VERSION@@";
+        description = "Software update for @@MACHINE@@ device";
+
+        hardware-compatibility = [ "#RE:^0\.[0-9]+$" ];
+
+        stable = {
+                a: {
+                        images: (
+                                {
+                                        filename = "system.img.gz";
+                                        device = "/dev/disk/by-partlabel/system_a";
+                                        type = "raw";
+                                        compressed = "zlib";
+                                        installed-directly = true;
+                                },
+                                {
+                                        filename = "efi.bin.gz";
+                                        device = "/dev/disk/by-partlabel/efi_a";
+                                        type = "raw";
+                                        compressed = "zlib";
+                                        installed-directly = true;
+                                },
+                                {
+                                        filename = "dtb.bin.gz";
+                                        device = "/dev/disk/by-partlabel/dtb_a";
+                                        type = "raw";
+                                        compressed = "zlib";
+                                        installed-directly = true;
+                                }
+                        );
+                        scripts: (
+                                {
+                                        filename = "change_boot_slot.sh";
+                                        type = "postinstall";
+                                }
+                        );
+                };
+                b: {
+                        images: (
+                                {
+                                        filename = "system.img.gz";
+                                        device = "/dev/disk/by-partlabel/system_b";
+                                        type = "raw";
+                                        compressed = "zlib";
+                                        installed-directly = true;
+                                },
+                                {
+                                        filename = "efi.bin.gz";
+                                        device = "/dev/disk/by-partlabel/efi_b";
+                                        type = "raw";
+                                        compressed = "zlib";
+                                        installed-directly = true;
+                                },
+                                {
+                                        filename = "dtb.bin.gz";
+                                        device = "/dev/disk/by-partlabel/dtb_b";
+                                        type = "raw";
+                                        compressed = "zlib";
+                                        installed-directly = true;
+                                }
+                        );
+                        scripts: (
+                                {
+                                        filename = "change_boot_slot.sh";
+                                        type = "postinstall";
+                                }
+                        );
+                };
+        };
+}

@@ -1,0 +1,12 @@
+[Match]
+Name=br0
+
+# br0 is the only L3 interface: it runs the DHCP client and all services bind
+# here. All eth*/wlan* interfaces are L2 ports of this bridge.
+[Network]
+DHCP=yes
+
+[DHCP]
+UseMTU=yes
+RouteMetric=10
+ClientIdentifier=mac

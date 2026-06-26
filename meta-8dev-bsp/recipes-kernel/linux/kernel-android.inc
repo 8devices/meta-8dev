@@ -1,11 +1,7 @@
-# Extend do_qcom_img_deploy to produce a multi-DTB boot-${MACHINE}.img.
-#
-# linux-qcom-bootimg creates one boot image per DTB and symlinks
-# boot-${MACHINE}.img to the first entry in KERNEL_DEVICETREE.  On machines
-# with board-revision variants this picks the wrong DTB for non-matching
-# boards.  This append replicates the old kernel-android.bbclass behaviour:
-# all DTBs are concatenated after the kernel so the Qualcomm ABL can select
-# the correct one at runtime via qcom,board-id.
+# Produce a multi-DTB boot-${MACHINE}.img. linux-qcom-bootimg symlinks
+# boot-${MACHINE}.img to the first KERNEL_DEVICETREE entry, which is the wrong
+# DTB on boards with revision variants. Concatenate all DTBs after the kernel so
+# the Qualcomm ABL selects the correct one at runtime via qcom,board-id.
 
 python do_qcom_img_deploy:append:tobufi() {
     import shutil, subprocess
@@ -32,7 +28,6 @@ python do_qcom_img_deploy:append:tobufi() {
         for c in (d.getVar("SERIAL_CONSOLES") or "").split()
     )
 
-    # Replace per-DTB symlink with the multi-DTB image
     multi_img = os.path.join(deploy_dir, "boot-%s.img" % machine)
     if os.path.lexists(multi_img):
         os.unlink(multi_img)
@@ -45,7 +40,6 @@ python do_qcom_img_deploy:append:tobufi() {
         "--cmdline", "noinitrd rw rootwait %s %s" % (
             consoles, d.getVar("KERNEL_CMDLINE_EXTRA") or "")])
 
-    # boot.img → boot-${MACHINE}.img
     boot_img = os.path.join(deploy_dir, "boot.img")
     if os.path.lexists(boot_img):
         os.unlink(boot_img)

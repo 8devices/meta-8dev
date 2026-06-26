@@ -8,6 +8,9 @@ SOC_FAMILY .= ":tobufi"
 
 MACHINE_FEATURES += "wifi"
 
+# flashtools picks the host flash tool by MACHINE_FEATURE; tobufi uses fastboot.
+MACHINE_FEATURES += "fastboot"
+
 KERNEL_CLASSES += "linux-qcom-bootimg"
 QCOM_BOOTIMG_ROOTFS = "/dev/mmcblk0p24"
 

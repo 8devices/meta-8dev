@@ -17,6 +17,7 @@ get_board_id() {
 			compat=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -n 1)
 			case "$compat" in
 				"8devices,robonode")   board="robonode" ;;
+				"8devices,robovision") board="robovision" ;;
 				"8devices,tobufi-dvk") board="tobufi-dvk" ;;
 				*)                     board="tobufi" ;;
 			esac

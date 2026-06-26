@@ -1,0 +1,13 @@
+[Match]
+Name=eth*
+
+# Enslave every wired (eth*) interface to br0 (no L3 here). Sorts before the
+# stock 80-wired.network, so it wins over its per-port DHCP. wlan* APs are NOT
+# matched here: hostapd adds them to br0 itself (bridge=br0), and networkd can't
+# enslave an AP-mode vif anyway (it errors "does not allow enslaving to a bridge").
+[Network]
+Bridge=br0
+
+[Link]
+# Enslaved ports are not "online" themselves - br0 is the online target.
+RequiredForOnline=no

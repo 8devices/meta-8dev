@@ -49,6 +49,13 @@ vapid() {
 	echo $i
 }
 
+# Drivers that support 802.11ax (HE). Both ath11k and ath12k (QCN9274) do, so
+# HE/he_oper config applies to either. NOTE: this is not the same as the
+# ath11k-specific bdf_variant band switch in setup_band(), which stays ath11k.
+phy_has_he() {
+	[ "$PHY_DRIVER" = "ath11k" ] || [ "$PHY_DRIVER" = "ath12k" ]
+}
+
 hostap_get() {
 	var=$1
 	cfg=/etc/hostapd/"$VAP_NAME".conf
@@ -119,10 +126,19 @@ init_supplicant() {
 
 init_vap_defaults() {
 	[ -n "$BAND" ] || {
-		first_freq=$(iw phy "$PHY_NAME"	info | \
-			grep -oE "[0-9]+\.0 MHz" | \
-			awk -F'.' '{print $1; exit}')
-		[ "$first_freq" -lt "4000" ] && BAND=2 || BAND=5
+		# Detect band from the first usable channel frequency. List it via
+		# 'iw phy <phy> channels' (frequencies are not in 'info' on all
+		# drivers) and match "<freq> MHz" without a fractional part - ath12k
+		# prints "5180 MHz", older ath11k "5180.0 MHz"; both match.
+		first_freq=$(iw phy "$PHY_NAME" channels 2>/dev/null | \
+			grep -oE "[0-9]+ MHz" | \
+			awk '{print $1; exit}')
+		if [ -n "$first_freq" ]; then
+			[ "$first_freq" -lt "4000" ] && BAND=2 || BAND=5
+		else
+			BAND=5
+			info "Could not detect band for $PHY_NAME, defaulting to 5 GHz"
+		fi
 	}
 	[ -n "$COUNTRY" ] || COUNTRY=US
 	[ -n "$CHWIDTH" ] || CHWIDTH=20
@@ -197,7 +213,7 @@ apply_hostap() {
 	if [ "$BAND" = "2" ]; then
 		hostap_set hw_mode g
 		hostap_set ieee80211ac
-		[ "$PHY_DRIVER" = "ath11k" ] && hostap_set ieee80211ax 1
+		phy_has_he && hostap_set ieee80211ax 1
 		hostap_set vht_capab
 		hostap_set he_oper_chwidth
 		hostap_set he_oper_centr_freq_seg0_idx
@@ -206,7 +222,7 @@ apply_hostap() {
 	elif [ "$BAND" = "5" ]; then
 		hostap_set hw_mode a
 		hostap_set ieee80211ac 1
-		[ "$PHY_DRIVER" = "ath11k" ] && hostap_set ieee80211ax 1
+		phy_has_he && hostap_set ieee80211ax 1
 	fi
 
 	if [ -n "$FREQLIST" ] && [ "$FREQLIST" != "-" ]; then
@@ -242,7 +258,7 @@ apply_hostap() {
 		hostap_set vht_capab "$vhtcap"
 		hostap_set vht_oper_chwidth "$vht80"
 		hostap_set vht_oper_centr_freq_seg0_idx "$chan_center"
-		if [ "$PHY_DRIVER" = "ath11k" ]; then
+		if phy_has_he; then
 			hostap_set he_oper_chwidth "$vht80"
 			hostap_set he_oper_centr_freq_seg0_idx "$chan_center"
 		fi
@@ -400,6 +416,9 @@ setup_txpower() {
 }
 
 setup_band() {
+	# ath11k-specific: switches the board-data variant via the ath11k module
+	# bdf_variant parameter. ath12k has no equivalent, so this is a no-op there
+	# by design (do NOT widen to ath12k - it relies on ath11k-only features).
 	[ "$PHY_DRIVER" = "ath11k" ] || return
 	read -r BDF_VARIANT < /sys/module/ath11k/parameters/bdf_variant
 	[ "$BAND" = "$BDF_VARIANT" ] && return
@@ -411,17 +430,28 @@ setup_band() {
 }
 
 parse_radio() {
-	radio_dev=$(grep "$RADIO" "$RADIOS_CONFIG" | cut -d '=' -f2)
-	[ -z "$radio_dev" ] && help "no such radio found: $RADIO"
-	for phy in /sys/class/ieee80211/*; do
-		phy_dev=$(readlink -nf "$phy/device")
-		if [ "$phy_dev" = "$radio_dev" ]; then
-			PHY_NAME=$(basename "$phy")
-			PHY_DRIVER=$(readlink -f "$phy/device/driver" | grep -o "ath[0-9]\+k")
-			return
-		fi
-	done
-	help "Error: cannot find phy based on radio definition"
+	# radios.cfg entry: "radioN=<device syspath>[ <phy ordinal>]". The optional
+	# ordinal selects among a split-radio module's PHYs (e.g. QCN9274); single-PHY
+	# radios omit it.
+	radio_line=$(sed -n "s/^$RADIO=//p" "$RADIOS_CONFIG")
+	[ -z "$radio_line" ] && help "no such radio found: $RADIO"
+	radio_dev=${radio_line%% *}
+	radio_idx=0
+	[ "$radio_line" != "$radio_dev" ] && radio_idx=${radio_line#* }
+	radio_dev=$(readlink -nf "$radio_dev")
+
+	# The kernel wiphy index is a global, probe-order-dependent counter, so the
+	# ordinal is resolved against this device's own PHYs sorted by index rather
+	# than matched to a fixed index value.
+	PHY_NAME=$(for phy in /sys/class/ieee80211/*; do
+			[ -e "$phy/index" ] || continue
+			[ "$(readlink -nf "$phy/device")" = "$radio_dev" ] || continue
+			read -r phy_idx < "$phy/index"
+			printf '%s %s\n' "$phy_idx" "${phy##*/}"
+		done | sort -n | sed -n "$((radio_idx + 1))p" | cut -d' ' -f2)
+
+	[ -n "$PHY_NAME" ] || help "Error: cannot find phy based on radio definition"
+	PHY_DRIVER=$(readlink -f "/sys/class/ieee80211/$PHY_NAME/device/driver" | grep -o "ath[0-9]\+k")
 }
 
 parse_vap() {

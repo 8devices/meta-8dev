@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT
+define KMACHINE citron
+define KTYPE standard
+define KARCH arm64
+define KMETA_EXTERNAL_BSP t
+
+include ktypes/8dev/standard.scc
+
+include features/power/arm.scc
+include features/mmc/mmc-block.scc
+include features/i2c/i2c.scc
+include features/spi/spi.scc
+include features/pwm/pwm.scc
+include features/pci/pci.scc
+include features/usb/xhci-hcd.scc
+include cfg/timer/rtc.scc
+include cfg/8dev/gpio.scc
+
+include bsp/qcs6490/soc.scc
+include bsp/qcs6490/pcie.scc
+include bsp/qcs6490/usb.scc
+include bsp/qcs6490/usb-gadget.scc
+include bsp/qcs6490/usb-host.scc
+include bsp/citron/storage.scc
+
+patch patches/pci-qcom-force-synchronous-probe.patch
+patch patches/qcom-scm-reboot-edl-enters-download-mode.patch
