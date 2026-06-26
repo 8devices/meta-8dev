@@ -7,6 +7,8 @@ IMAGE_LINGUAS = ""
 COPY_LIC_MANIFEST = "0"
 COPY_LIC_DIRS = "0"
 
+CORE_IMAGE_EXTRA_INSTALL:8dev-basic:append = " base-network"
+
 # Citron only: dmidecode for SMBIOS/DMI inspection on the UEFI/UKI boot path.
 CORE_IMAGE_EXTRA_INSTALL:append:citron = " dmidecode"
 

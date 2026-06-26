@@ -19,4 +19,3 @@ FEATURE_PACKAGES_network-debug = "packagegroup-network-debug"
 FEATURE_PACKAGES_update-tools = "packagegroup-update-tools"
 
 CORE_IMAGE_EXTRA_INSTALL:append = " board-conf radio-conf"
-CORE_IMAGE_EXTRA_INSTALL:8dev-basic:append = " base-network"
