@@ -23,6 +23,14 @@ do_deploy_qcom[nostamp] = "1"
 do_deploy_qcom () {
     SRC="${DEPLOY_DIR_IMAGE}"
 
+    # IMAGE_CLASSES applies this task to every image built for the machine, but
+    # only the full rootfs image produces the ext4 we package here. The esp/dtb/
+    # initramfs helper images have no ext4, so skip them instead of failing.
+    if [ ! -e "${SRC}/${IMAGE_LINK_NAME}.${SYSTEMIMAGE_TYPE}" ]; then
+        bbnote "deploy_qcom: ${IMAGE_LINK_NAME}.${SYSTEMIMAGE_TYPE} not found, skipping ${PN}"
+        return
+    fi
+
     install -m 0644 "${SRC}/${IMAGE_LINK_NAME}.${SYSTEMIMAGE_TYPE}" "${SYSTEMIMAGE_TARGET}"
     install -m 0644 "${SRC}/esp-qcom-image-${MACHINE}${IMAGE_NAME_SUFFIX}.vfat" efi.bin
     install -m 0644 "${SRC}/dtb-qcom-image-${MACHINE}${IMAGE_NAME_SUFFIX}.vfat" dtb.bin
