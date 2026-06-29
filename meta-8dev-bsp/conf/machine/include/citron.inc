@@ -1,5 +1,4 @@
 require conf/machine/include/qcom-qcs6490.inc
-include conf/machine/include/citron-extras.inc
 
 MACHINEOVERRIDES:prepend = "citron:"
 
@@ -24,3 +23,9 @@ BAD_RECOMMENDATIONS:append = " \
 "
 
 SERIAL_CONSOLES = "115200;ttyMSM0"
+
+# Premium overrides last: meta-8dev-extras (when present) re-selects the private
+# linux-8dev kernel on the qcom-base-bsp override. Included after this file's
+# base-bsp defaults so the premium values win; silently skipped on basic builds
+# where the layer is absent (8dev-basic keeps linux-yocto).
+include conf/machine/include/citron-extras.inc
