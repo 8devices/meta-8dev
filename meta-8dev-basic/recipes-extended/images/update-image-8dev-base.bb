@@ -14,7 +14,3 @@ SWUPDATE_IMAGES_FSTYPES[8dev-image-base] = ".rootfs.ext4"
 SWUPDATE_IMAGES_FSTYPES[dtb] = ".bin.gz"
 SWUPDATE_IMAGES_FSTYPES[efi] = ".bin.gz"
 SWUPDATE_IMAGES_FSTYPES[system] = ".img.gz"
-
-# Compound update (rootfs + kernel/dtb + ESP); drop the default ".rootfs" suffix
-# so the .swu name isn't misleading.
-IMAGE_NAME_SUFFIX:citron = ""
