@@ -8,7 +8,7 @@ slot_suffix=$(systemctl show-environment 2>/dev/null | grep "^SLOT_SUFFIX=" | cu
 case "$slot_suffix" in
     _a) echo "A" ;;
     _b) echo "B" ;;
-    *) [ -n "$DEBUG" ] echo "" || echo "Unknown" ;;
+    *) [ -n "$DEBUG" ] && echo "" || echo "Unknown" ;;
 esac
 
 if [ -f /lib/release/build ]; then
