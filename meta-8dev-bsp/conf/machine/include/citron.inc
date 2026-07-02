@@ -12,6 +12,7 @@ QCOM_SELECTED_BSP = "base"
 PREFERRED_PROVIDER_virtual/kernel:citron ?= "linux-yocto"
 PREFERRED_VERSION_linux-yocto:citron ?= "6.18%"
 PREFERRED_VERSION_wpa-supplicant:citron = "2.10"
+PREFERRED_VERSION_hostapd:citron = "2.10"
 
 MACHINE_ESSENTIAL_EXTRA_RRECOMMENDS:append = " \
     qbootctl \
