@@ -1,10 +1,11 @@
+# Qualcomm include files form a non-conventional MACHINEOVERRIDES
+# order, which makes Qualcomm BSP overrides to take a precedence
+# over our prepended SOM override. Thus, we must prepend override
+# before including qcom SOM include file.
+MACHINEOVERRIDES =. "tobufi:"
+
 require conf/machine/include/qcom-qcs40x.inc
 include conf/machine/include/tobufi-extras.inc
-
-# Add "tobufi" as a sub-family level so it lands between SOC_FAMILY (qcom/qcs40x)
-# and ${MACHINE} in OVERRIDES: :tobufi outranks the SOC overrides but the
-# machine's own override still wins.
-SOC_FAMILY .= ":tobufi"
 
 MACHINE_FEATURES += "wifi"
 

@@ -1,12 +1,17 @@
-require conf/machine/include/qcom-qcs6490.inc
+# Qualcomm include files form a non-conventional MACHINEOVERRIDES
+# order, which makes Qualcomm BSP overrides to take a precedence
+# over our prepended SOM override. Thus, we must prepend override
+# before including qcom SOM include file.
+MACHINEOVERRIDES =. "citron:"
 
-MACHINEOVERRIDES:prepend = "citron:"
+require conf/machine/include/qcom-qcs6490.inc
+include conf/machine/include/citron-extras.inc
 
 QCOM_SELECTED_BSP = "base"
 
-PREFERRED_PROVIDER_virtual/kernel:qcom-base-bsp = "linux-yocto"
-PREFERRED_VERSION_linux-yocto:qcom-base-bsp = "6.18%"
-PREFERRED_VERSION_wpa-supplicant:qcom-base-bsp = "2.10"
+PREFERRED_PROVIDER_virtual/kernel:citron ?= "linux-yocto"
+PREFERRED_VERSION_linux-yocto:citron ?= "6.18%"
+PREFERRED_VERSION_wpa-supplicant:citron = "2.10"
 
 MACHINE_ESSENTIAL_EXTRA_RRECOMMENDS:append = " \
     qbootctl \
@@ -23,9 +28,3 @@ BAD_RECOMMENDATIONS:append = " \
 "
 
 SERIAL_CONSOLES = "115200;ttyMSM0"
-
-# Premium overrides last: meta-8dev-extras (when present) re-selects the private
-# linux-8dev kernel on the qcom-base-bsp override. Included after this file's
-# base-bsp defaults so the premium values win; silently skipped on basic builds
-# where the layer is absent (8dev-basic keeps linux-yocto).
-include conf/machine/include/citron-extras.inc
