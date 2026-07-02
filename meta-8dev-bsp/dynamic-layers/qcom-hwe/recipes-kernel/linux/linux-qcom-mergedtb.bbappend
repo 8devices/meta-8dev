@@ -1,14 +1,28 @@
-# Already citron-only (dynamic-layers/qcom-hwe, and mergedtb is only built for
-# the citron UEFI/UKI path), so tasks are unconditional. The base recipe has no
-# do_deploy, so a :citron override would leave it empty on the build that needs it.
-python do_compile:prepend() {
-    kernel_dt_var = "KERNEL_DEVICETREE:pn-" + d.getVar('PREFERRED_PROVIDER_virtual/kernel')
-    kernel_dt = d.getVar(kernel_dt_var) or ""
-    filtered = " ".join(e for e in kernel_dt.split() if e.endswith('.dtb'))
-    d.setVar(kernel_dt_var, filtered)
-}
+# citron-only (dynamic-layers/qcom-hwe; mergedtb is built only for the citron
+# UEFI/UKI path). We don't use tech DTBOs yet and only need the single combined
+# DTB, so replace the base recipe's DTBO-merging do_compile with a plain
+# concatenation of the machine's device trees.
+python do_compile() {
+    import os, shutil
 
-FILES:${PN} += "*.dtbo"
+    dtoverlaydir = os.path.join(d.getVar('B'), 'DTOverlays')
+    os.makedirs(dtoverlaydir, exist_ok=True)
+
+    deploy = d.getVar('DEPLOY_DIR_IMAGE')
+    dtbs = [dt for dt in (d.getVar('KERNEL_DEVICETREE') or "").split()
+            if dt.endswith('.dtb')]
+    if not dtbs:
+        bb.fatal("linux-qcom-mergedtb: KERNEL_DEVICETREE lists no .dtb files")
+
+    # Concatenate the base DTB(s) into the single combined image the UEFI/UKI
+    # path consumes. No overlays are applied.
+    combined = os.path.join(dtoverlaydir, "combined-dtb.dtb")
+    with open(combined, "wb") as fout:
+        for dt in dtbs:
+            src = os.path.join(deploy, os.path.basename(dt))
+            with open(src, "rb") as fin:
+                shutil.copyfileobj(fin, fout)
+}
 
 inherit deploy
 
