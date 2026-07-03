@@ -1,0 +1,34 @@
+[
+    {
+        "board": [
+            {
+                "names": [
+                    "bus=pci,qmi-chip-id=0,qmi-board-id=255"
+                ],
+                "data": "bdwlanSKY.b1003"
+            },
+            {
+                "names": [
+                    "bus=pci,qmi-chip-id=0,qmi-board-id=4099"
+                ],
+                "data": "bdwlanSKY.b1003"
+            },
+            {
+                "names": [
+                    "bus=pci,qmi-chip-id=0,qmi-board-id=4101"
+                ],
+                "data": "bdwlan.b1005"
+            }
+        ],
+        "regdb": [
+            {
+                "names": [
+                    "bus=pci,qmi-chip-id=0,qmi-board-id=255",
+                    "bus=pci,qmi-chip-id=0,qmi-board-id=4099",
+                    "bus=pci,qmi-chip-id=0,qmi-board-id=4101"
+                ],
+                "data": "regdb.bin"
+            }
+        ]
+    }
+]
