@@ -1,13 +1,14 @@
 DEPENDS:append:tobufi = "qca-swiss-army-knife-native"
-DEPENDS:append:citron = "qca-swiss-army-knife-native"
+DEPENDS:append:robovision = "qca-swiss-army-knife-native"
 
 FILESEXTRAPATHS:prepend:tobufi := "${THISDIR}/${PN}:"
-FILESEXTRAPATHS:prepend:citron := "${THISDIR}/${PN}:"
+FILESEXTRAPATHS:prepend:robovision := "${THISDIR}/${PN}:"
+
 SRC_URI:append:tobufi = "\
     file://WCN3990 \
     file://QCN9074 \
 "
-SRC_URI:append:citron = " \
+SRC_URI:append:robovision = " \
     file://QCN9274 \
 "
 
@@ -16,30 +17,32 @@ do_compile:append:tobufi() {
      (cd ${WORKDIR}/QCN9074; ath11k-bdencoder -c board-2.json -o board-2.bin)
 }
 
+do_compile:append:robovision() {
+     (cd ${WORKDIR}/QCN9274; ath12k-bdencoder -c board-2.json -o board-2.bin)
+}
+
 do_install:append:tobufi() {
     install -m 0644 ${WORKDIR}/WCN3990/qdsp6sw.mbn ${D}${nonarch_base_libdir}/firmware/ath10k/WCN3990/hw1.0
     install -m 0644 ${WORKDIR}/WCN3990/board-2.bin ${D}${nonarch_base_libdir}/firmware/ath10k/WCN3990/hw1.0
     install -m 0644 ${WORKDIR}/QCN9074/board-2.bin ${D}${nonarch_base_libdir}/firmware/ath11k/QCN9074/hw1.0
 }
 
-do_install:append:citron() {
-    install -m 0644 ${WORKDIR}/QCN9274/bdwlanSKY.b1003 \
-        ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/board.bin
-    install -m 0644 ${WORKDIR}/QCN9274/regdb.bin \
-        ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/regdb.bin
-    install -m 0644 ${WORKDIR}/QCN9274/caldata_4.bin \
-        ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/caldata.bin
+do_install:append:robovision() {
+    install -m 0644 ${WORKDIR}/QCN9274/board-2.bin \
+        ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0
+
     install -m 0644 ${WORKDIR}/QCN9274/amss_dualmac.bin \
         ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/amss.bin
     install -m 0644 ${WORKDIR}/QCN9274/m3.bin \
         ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/m3.bin
 
-    # Drop upstream multi-board blobs (we ship single board.bin/regdb.bin).
-    # rm -f because they're absent in linux-firmware 20251125 and a failing test
-    # as the function's last command would fail do_install.
-    rm -f ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/firmware-2.bin
-    rm -f ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/board-2.bin
+    install -m 0644 ${WORKDIR}/QCN9274/caldata_4.bin \
+        ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/caldata.bin
+}
 
+# Cleanup preinstalled files.
+do_install:append:robovision() {
+    rm -f ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/firmware-2.bin
     # Both on-board NICs are RTL8168H/8111H and load only rtl8168h-2.fw; drop the
     # other rtl8168 variant blobs.
     find ${D}${nonarch_base_libdir}/firmware/rtl_nic -name 'rtl8168*.fw' \
@@ -47,7 +50,7 @@ do_install:append:citron() {
 }
 
 # Disable the Qualcomm artifact-server fetch.
-QCM6490_SRC_URI:citron = ""
+QCM6490_SRC_URI:robovision = ""
 
 # gptauuid.xml is a GPT partition map, not loadable firmware, and no HLOSFW
 # update package claims it.
