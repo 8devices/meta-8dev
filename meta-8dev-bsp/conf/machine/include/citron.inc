@@ -7,6 +7,8 @@ MACHINEOVERRIDES =. "citron:"
 require conf/machine/include/qcom-qcs6490.inc
 include conf/machine/include/citron-extras.inc
 
+MACHINEOVERRIDES .= ":emmc-storage"
+
 QCOM_SELECTED_BSP = "base"
 
 PREFERRED_PROVIDER_virtual/kernel:citron ?= "linux-yocto"
