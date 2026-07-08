@@ -3,9 +3,18 @@
 get_board_id() {
 	local board rev board_id compat
 
+	# Board ID comes from the CDT. When absent (legacy board), fall back to
+	# the board-type default -- QCS405 IOT board id 0x20.
 	if [ -e /dev/disk/by-partlabel/cdt ]; then
 		board_id=$(dd if=/dev/disk/by-partlabel/cdt bs=1 skip=$((0x17)) count=4 2>/dev/null \
 			| od -H | awk 'NR==1{print $2}')
+	fi
+	if [ -z "$board_id" ]; then
+		board_id="00000020"
+	fi
+
+	if [ -f /proc/device-tree/compatible ]; then
+		compat=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -n 1)
 	fi
 
 	case "$board_id" in
@@ -13,22 +22,26 @@ get_board_id() {
 		81000420) board="tobufi-dvk"; rev="rev4.0" ;;
 		81000520) board="tobufi-dvk"; rev="rev5.0" ;;
 		82000220) board="robonode";   rev="rev2.0" ;;
-		*)
-			compat=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -n 1)
+		00000020)
 			case "$compat" in
-				"8devices,robonode")   board="robonode" ;;
-				"8devices,robovision") board="robovision" ;;
-				"8devices,tobufi-dvk") board="tobufi-dvk" ;;
-				*)                     board="tobufi" ;;
+				"8devices,tobufi-dvk") board="tobufi-dvk"; rev="rev3.0" ;;
+				"8devices,robonode")   board="robonode";   rev="rev1.0" ;;
 			esac
-			rev=""
 			;;
+	esac
+
+	# Use board compatible as primary board name source
+	case "$compat" in
+		"8devices,tobufi-dvk") board="tobufi-dvk" ;;
+		"8devices,robonode")   board="robonode" ;;
+		"8devices,robovision") board="robovision" ;;
+		*)                     board="$compat" ;;
 	esac
 
 	if [ -n "$DUMP" ]; then
 		echo "BOARD=$board"
-		[ -n "$board_id" ] && echo "BOARD_ID=0x$board_id"
-		[ -n "$rev" ] && echo "BOARD_REV=$rev"
+		echo "BOARD_REV=$rev"
+		echo "BOARD_ID=$board_id"
 		return
 	fi
 
