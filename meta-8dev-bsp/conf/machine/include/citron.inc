@@ -11,6 +11,8 @@ MACHINEOVERRIDES .= ":emmc-storage"
 
 QCOM_SELECTED_BSP = "base"
 
+EFI_UKI_ADD_CMDLINE = "True"
+
 PREFERRED_PROVIDER_virtual/kernel:citron ?= "linux-yocto"
 PREFERRED_VERSION_linux-yocto:citron ?= "6.18%"
 PREFERRED_VERSION_wpa-supplicant:citron = "2.10"
