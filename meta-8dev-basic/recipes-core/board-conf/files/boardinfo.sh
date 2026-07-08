@@ -41,6 +41,12 @@ get_radio_id() {
 	svid=$(cat "/sys/devices/platform/soc@0/10000000.pci/pci0000:00/0000:00:00.0/0000:01:00.0/subsystem_device" 2>/dev/null)
 	sdid=$(cat "/sys/devices/platform/soc@0/10000000.pci/pci0000:00/0000:00:00.0/0000:01:00.0/subsystem_vendor" 2>/dev/null)
 
+	# XXX: mixed radio IDs handling
+	if [ "$sdid" = "0x3845" ]; then
+		sdid="$svid"
+		svid="0x3845"
+	fi
+
 	case $svid in
 		0x3844) type="Standard" ;;
 		0x3845) type="Premium" ;;
