@@ -9,10 +9,10 @@ get_board_id() {
 	fi
 
 	case "$board_id" in
-		81030020) board="tobufi-dvk"; rev="rev3.0" ;;
-		81040020) board="tobufi-dvk"; rev="rev4.0" ;;
-		81050020) board="tobufi-dvk"; rev="rev5.0" ;;
-		82020020) board="robonode";   rev="rev2.0" ;;
+		81000320) board="tobufi-dvk"; rev="rev3.0" ;;
+		81000420) board="tobufi-dvk"; rev="rev4.0" ;;
+		81000520) board="tobufi-dvk"; rev="rev5.0" ;;
+		82000220) board="robonode";   rev="rev2.0" ;;
 		*)
 			compat=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -n 1)
 			case "$compat" in
