@@ -1,7 +1,7 @@
 #!/bin/sh
 
 get_board_id() {
-	local board rev compat board_id board_cdt
+	local board rev compat board_base board_id board_cdt
 
 	# Board ID comes from the CDT. When absent (legacy board), fall back to
 	# the board-type default -- QCS405 IOT board id 0x20.
@@ -22,14 +22,14 @@ get_board_id() {
 	fi
 
 	case "$board_id" in
-		0x81000320) board="tobufi-dvk"; rev="3.0" ;;
-		0x81000420) board="tobufi-dvk"; rev="4.0" ;;
-		0x81000520) board="tobufi-dvk"; rev="5.0" ;;
-		0x82000220) board="robonode";   rev="2.0" ;;
+		0x81000320) board_base="tobufi-dvk"; rev="3.0" ;;
+		0x81000420) board_base="tobufi-dvk"; rev="4.0" ;;
+		0x81000520) board_base="tobufi-dvk"; rev="5.0" ;;
+		0x82000220) board_base="robonode";   rev="2.0" ;;
 		0x00000020)
 			case "$compat" in
-				"8devices,tobufi-dvk") board="tobufi-dvk"; rev="3.0" ;;
-				"8devices,robonode")   board="robonode";   rev="1.0" ;;
+				"8devices,tobufi-dvk") board_base="tobufi-dvk"; rev="3.0" ;;
+				"8devices,robonode")   board_base="robonode";   rev="1.0" ;;
 			esac
 			;;
 	esac
@@ -43,6 +43,7 @@ get_board_id() {
 	esac
 
 	if [ -n "$DUMP" ]; then
+		[ -n "$board_base" -a "$board_base" != "$board" ] && echo "BOARD_BASE=$board_base"
 		echo "BOARD=$board"
 		echo "BOARD_REV=$rev"
 		echo "BOARD_ID=$board_id"
