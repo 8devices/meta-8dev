@@ -9,8 +9,10 @@ get_board_id() {
 		board_id=$(dd if=/dev/disk/by-partlabel/cdt bs=1 skip=$((0x17)) count=4 2>/dev/null \
 			| od -H | awk 'NR==1{print $2}')
 	fi
-	if [ -z "$board_id" ]; then
-		board_id="00000020"
+	if [ -n "$board_id" ]; then
+		board_id="0x$board_id"
+	else
+		board_id="0x00000020"
 	fi
 
 	if [ -f /proc/device-tree/compatible ]; then
@@ -18,14 +20,14 @@ get_board_id() {
 	fi
 
 	case "$board_id" in
-		81000320) board="tobufi-dvk"; rev="rev3.0" ;;
-		81000420) board="tobufi-dvk"; rev="rev4.0" ;;
-		81000520) board="tobufi-dvk"; rev="rev5.0" ;;
-		82000220) board="robonode";   rev="rev2.0" ;;
-		00000020)
+		0x81000320) board="tobufi-dvk"; rev="3.0" ;;
+		0x81000420) board="tobufi-dvk"; rev="4.0" ;;
+		0x81000520) board="tobufi-dvk"; rev="5.0" ;;
+		0x82000220) board="robonode";   rev="2.0" ;;
+		0x00000020)
 			case "$compat" in
-				"8devices,tobufi-dvk") board="tobufi-dvk"; rev="rev3.0" ;;
-				"8devices,robonode")   board="robonode";   rev="rev1.0" ;;
+				"8devices,tobufi-dvk") board="tobufi-dvk"; rev="3.0" ;;
+				"8devices,robonode")   board="robonode";   rev="1.0" ;;
 			esac
 			;;
 	esac
@@ -45,7 +47,7 @@ get_board_id() {
 		return
 	fi
 
-	printf "Board name: %s\n" "${board}${rev:+ $rev}"
+	printf "Board name: %s\n" "${board}${rev:+ rev$rev}"
 }
 
 get_radio_id() {
