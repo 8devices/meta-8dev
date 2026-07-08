@@ -1,7 +1,7 @@
 #!/bin/sh
 
 get_board_id() {
-	local board rev board_id compat
+	local board rev compat board_id board_cdt
 
 	# Board ID comes from the CDT. When absent (legacy board), fall back to
 	# the board-type default -- QCS405 IOT board id 0x20.
@@ -11,8 +11,10 @@ get_board_id() {
 	fi
 	if [ -n "$board_id" ]; then
 		board_id="0x$board_id"
+		board_cdt="yes"
 	else
 		board_id="0x00000020"
+		board_cdt="no"
 	fi
 
 	if [ -f /proc/device-tree/compatible ]; then
@@ -44,6 +46,7 @@ get_board_id() {
 		echo "BOARD=$board"
 		echo "BOARD_REV=$rev"
 		echo "BOARD_ID=$board_id"
+		echo "BOARD_CDT=$board_cdt"
 		return
 	fi
 
