@@ -300,10 +300,10 @@
 	};
 };
 
-/* Only CCI0 bus 0 is wired here; override the sc7280 default that also muxes bus 1. */
+/* CCI0 hosts both sensors: bus 0 -> IMX577, bus 1 -> OV9282. */
 &cci0 {
-	pinctrl-0 = <&cci0_default>;
-	pinctrl-1 = <&cci0_sleep>;
+	pinctrl-0 = <&cci0_default &cci1_default>;
+	pinctrl-1 = <&cci0_sleep &cci1_sleep>;
 	status = "okay";
 };
 
@@ -378,5 +378,101 @@
 		gpios = <112 GPIO_ACTIVE_HIGH>;
 		output-high;
 		line-name = "CAM0_STBY_N";
+	};
+};
+
+/*
+ * OmniVision OV9282 (1 MP mono global shutter) on CSI1: CSIPHY1 (CAMSS port@1),
+ * I2C on CCI0 bus 1 at 0x60, mainline ov9282 driver (2 lanes, 400 MHz link).
+ * camcc/CAMSS already enabled above; this only adds the CSIPHY1 port.
+ */
+&camss {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@1 {
+			reg = <1>;
+
+			csiphy1_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1>;
+				remote-endpoint = <&ov9282_ep>;
+			};
+		};
+	};
+};
+
+&cci0_i2c1 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	camera@60 {
+		compatible = "ovti,ov9282";
+		reg = <0x60>;
+
+		reset-gpios = <&tlmm 11 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default", "suspend";
+		pinctrl-0 = <&cam1_default>;
+		pinctrl-1 = <&cam1_suspend>;
+
+		clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		assigned-clock-rates = <24000000>;
+
+		/* Module self-regulates; all ov9282 supplies map to the single 1.8V rail (L8C). */
+		avdd-supply = <&vreg_l8c_1p62>;
+		dovdd-supply = <&vreg_l8c_1p62>;
+		dvdd-supply = <&vreg_l8c_1p62>;
+
+		port {
+			ov9282_ep: endpoint {
+				link-frequencies = /bits/ 64 <400000000>;
+				data-lanes = <1 2>;
+				remote-endpoint = <&csiphy1_ep>;
+			};
+		};
+	};
+};
+
+&tlmm {
+	cam1_default: cam1-default-state {
+		mclk-pins {
+			pins = "gpio65";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		rst-pins {
+			pins = "gpio11";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam1_suspend: cam1-suspend-state {
+		mclk-pins {
+			pins = "gpio65";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		rst-pins {
+			pins = "gpio11";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	/* ov9282 has no standby control; hold CAM1_STBY/PDN de-asserted (active-low, drive high). */
+	cam1_pwdn_hog: cam1-pwdn-hog {
+		gpio-hog;
+		gpios = <27 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "CAM1_STBY_N";
 	};
 };
