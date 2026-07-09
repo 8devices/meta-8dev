@@ -24,3 +24,12 @@ RDEPENDS:${PN} = "\
 
 # Software H.264 encoder, enabled in the plugins-bad bbappend.
 RDEPENDS:${PN}:append:citron = " gstreamer1.0-plugins-bad-openh264"
+
+# Development CPU-pipeline tooling: libav (avdec_*), ffmpeg/ffprobe CLI,
+# rtsp-server, x264enc. libav/ffmpeg and x264 are commercial-flagged (citron.inc).
+RDEPENDS:${PN}:append:citron = " \
+    gstreamer1.0-libav \
+    ffmpeg \
+    gstreamer1.0-rtsp-server \
+    gstreamer1.0-plugins-ugly-x264 \
+"

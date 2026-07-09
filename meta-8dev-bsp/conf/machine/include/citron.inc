@@ -23,8 +23,9 @@ PREFERRED_VERSION_hostapd:citron = "2.10"
 # DEFAULT_PREFERENCE="-1", so this override selects it.
 PREFERRED_VERSION_libcamera:citron = "0.7.1"
 
-# Accept openh264's "commercial" LICENSE_FLAGS (citron-only; tobufi doesn't parse this).
-LICENSE_FLAGS_ACCEPTED:append = " commercial_openh264"
+# Accept the "commercial" LICENSE_FLAGS for the patent-encumbered codecs in the
+# citron camera stack (openh264, ffmpeg/libav, x264/plugins-ugly); citron-only.
+LICENSE_FLAGS_ACCEPTED:append = " commercial_openh264 commercial_ffmpeg commercial_gstreamer1.0-libav commercial_x264 commercial_gstreamer1.0-plugins-ugly"
 
 MACHINE_ESSENTIAL_EXTRA_RRECOMMENDS:append = " \
     qbootctl \
