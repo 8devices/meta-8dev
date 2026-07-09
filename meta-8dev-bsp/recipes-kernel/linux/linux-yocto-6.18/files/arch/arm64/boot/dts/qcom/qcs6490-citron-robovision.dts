@@ -411,7 +411,8 @@
 		compatible = "ovti,ov9282";
 		reg = <0x60>;
 
-		reset-gpios = <&tlmm 11 GPIO_ACTIVE_LOW>;
+		/* ov9282 drives XCLR high to release reset (inverse of most drivers). */
+		reset-gpios = <&tlmm 11 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "default", "suspend";
 		pinctrl-0 = <&cam1_default>;
 		pinctrl-1 = <&cam1_suspend>;
