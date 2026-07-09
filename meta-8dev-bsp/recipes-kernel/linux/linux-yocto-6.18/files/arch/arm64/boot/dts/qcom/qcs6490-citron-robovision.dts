@@ -477,3 +477,9 @@
 		line-name = "CAM1_STBY_N";
 	};
 };
+
+/* ov9282 enables supplies without setting a voltage; pin L8C to 1.8V (else idles at 1.62V floor). */
+&vreg_l8c_1p62 {
+	regulator-min-microvolt = <1800000>;
+	regulator-max-microvolt = <1800000>;
+};
