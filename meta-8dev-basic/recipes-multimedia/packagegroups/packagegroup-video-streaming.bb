@@ -21,3 +21,6 @@ RDEPENDS:${PN} = "\
     libcamera \
     libcamera-gst \
 "
+
+# Software H.264 encoder, enabled in the plugins-bad bbappend.
+RDEPENDS:${PN}:append:citron = " gstreamer1.0-plugins-bad-openh264"

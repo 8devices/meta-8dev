@@ -18,6 +18,9 @@ PREFERRED_VERSION_linux-yocto:citron ?= "6.18%"
 PREFERRED_VERSION_wpa-supplicant:citron = "2.10"
 PREFERRED_VERSION_hostapd:citron = "2.10"
 
+# Accept openh264's "commercial" LICENSE_FLAGS (citron-only; tobufi doesn't parse this).
+LICENSE_FLAGS_ACCEPTED:append = " commercial_openh264"
+
 MACHINE_ESSENTIAL_EXTRA_RRECOMMENDS:append = " \
     qbootctl \
 "
