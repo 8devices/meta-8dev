@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: CC0-1.0
+# IMX577 soft-ISP tuning: fixed black level + neutral WB gains, no AGC. Works
+# around unreliable sc7280 CAMSS soft-ISP stats; set exposure manually via v4l2-ctl.
+%YAML 1.1
+---
+version: 1
+algorithms:
+  - BlackLevel:
+      blackLevel: 4096
+  - Awb:
+      gains: [ 1.0, 1.0 ]
+  - Lut:
+...
