@@ -483,3 +483,15 @@
 	regulator-min-microvolt = <1800000>;
 	regulator-max-microvolt = <1800000>;
 };
+
+/*
+ * Venus HW video codec. videocc is disabled on the SOM (qcs6490-citron.dtsi) and
+ * the codec is disabled by default in sc7280.dtsi; re-enable both here.
+ */
+&videocc {
+	status = "okay";
+};
+
+&venus {
+	status = "okay";
+};
