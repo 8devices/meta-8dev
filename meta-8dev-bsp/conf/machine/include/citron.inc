@@ -18,6 +18,11 @@ PREFERRED_VERSION_linux-yocto:citron ?= "6.18%"
 PREFERRED_VERSION_wpa-supplicant:citron = "2.10"
 PREFERRED_VERSION_hostapd:citron = "2.10"
 
+# Use libcamera 0.7.1 (meta-8dev-basic) over the meta-multimedia 0.4.0 default,
+# for its colour-temperature AWB + CCM soft ISP. The recipe sets
+# DEFAULT_PREFERENCE="-1", so this override selects it.
+PREFERRED_VERSION_libcamera:citron = "0.7.1"
+
 # Accept openh264's "commercial" LICENSE_FLAGS (citron-only; tobufi doesn't parse this).
 LICENSE_FLAGS_ACCEPTED:append = " commercial_openh264"
 
