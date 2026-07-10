@@ -10,7 +10,8 @@
 
 / {
 	/* IOT (0x20) TobuFi-DVK (0x81) HWrev (4.0) */
-	qcom,board-id = <0x81040020 0x0>;
+	/* Compatibility: TobuFi-SoM (0x80) HWrev (5.0) */
+	qcom,board-id = <0x81040020 0x0>, <0x80050020 0x0>;
 
 	aliases {
 		serial0 = &blsp1_uart2;
