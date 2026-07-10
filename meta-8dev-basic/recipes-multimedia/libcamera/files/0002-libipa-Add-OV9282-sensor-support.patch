@@ -1,0 +1,55 @@
+From edfc5b6dc87fcb1f138dd64fb204a81b26d48190 Mon Sep 17 00:00:00 2001
+From: 8devices <support@8devices.com>
+Date: Fri, 10 Jul 2026 11:35:51 +0300
+Subject: [PATCH] libipa: Add OV9282 sensor support (ov9281-equivalent)
+
+---
+ src/ipa/libipa/camera_sensor_helper.cpp           | 10 ++++++++++
+ src/libcamera/sensor/camera_sensor_properties.cpp | 10 ++++++++++
+ 2 files changed, 20 insertions(+)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index e3e3e53..97875e1 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -779,6 +779,16 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("ov8865", CameraSensorHelperOv8865)
+ 
++class CameraSensorHelperOv9282 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperOv9282()
++	{
++		gain_ = AnalogueGainLinear{ 1, 0, 0, 16 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("ov9282", CameraSensorHelperOv9282)
++
+ class CameraSensorHelperOv13858 : public CameraSensorHelper
+ {
+ public:
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index b217363..496384c 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -485,6 +485,16 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 				.hblankDelay = 2
+ 			},
+ 		} },
++		{ "ov9282", {
++			.unitCellSize = { 3000, 3000 },
++			.testPatternModes =  { },
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
+ 		{ "ov13858", {
+ 			.unitCellSize = { 1120, 1120 },
+ 			.testPatternModes =  {
+-- 
+2.43.0
+

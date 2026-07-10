@@ -19,6 +19,7 @@ LIC_FILES_CHKSUM = "\
 SRC_URI = " \
         git://git.libcamera.org/libcamera/libcamera.git;protocol=https;branch=master \
         file://0001-libipa-Add-IMX577-sensor-support.patch \
+        file://0002-libipa-Add-OV9282-sensor-support.patch \
 "
 
 SRCREV = "183e37362f57ff3ce7493abf0bc6f1b57b931f55"
