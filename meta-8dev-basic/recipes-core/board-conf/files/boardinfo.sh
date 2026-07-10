@@ -23,12 +23,14 @@ get_board_id() {
 
 	# Initial base resolution
 	case "$compat" in
+		"8devices,tobufi")     board_base="tobufi-som" ;;
 		"8devices,tobufi-dvk") board_base="tobufi-dvk" ;;
 		"8devices,robonode")   board_base="robonode"   ;;
 		"8devices,robovision") board_base="robovision" ;;
 	esac
 
 	case "$board_id" in
+		0x80000520) board_base="tobufi-som"; rev="5.0" ;;
 		0x81000320) board_base="tobufi-dvk"; rev="3.0" ;;
 		0x81000420) board_base="tobufi-dvk"; rev="4.0" ;;
 		0x81000520) board_base="tobufi-dvk"; rev="5.0" ;;
