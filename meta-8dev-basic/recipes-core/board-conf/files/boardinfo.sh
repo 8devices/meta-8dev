@@ -21,6 +21,13 @@ get_board_id() {
 		compat=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -n 1)
 	fi
 
+	# Initial base resolution
+	case "$compat" in
+		"8devices,tobufi-dvk") board_base="tobufi-dvk" ;;
+		"8devices,robonode")   board_base="robonode"   ;;
+		"8devices,robovision") board_base="robovision" ;;
+	esac
+
 	case "$board_id" in
 		0x81000320) board_base="tobufi-dvk"; rev="3.0" ;;
 		0x81000420) board_base="tobufi-dvk"; rev="4.0" ;;
@@ -32,15 +39,14 @@ get_board_id() {
 				"8devices,robonode")   board_base="robonode";   rev="1.0" ;;
 			esac
 			;;
+		0x00010120)
+			case "$compat" in
+				"8devices,robovision") board_base="robovision"; rev="1.0" ;;
+			esac
+			;;
 	esac
 
-	# Use board compatible as primary board name source
-	case "$compat" in
-		"8devices,tobufi-dvk") board="tobufi-dvk" ;;
-		"8devices,robonode")   board="robonode" ;;
-		"8devices,robovision") board="robovision" ;;
-		*)                     board="$compat" ;;
-	esac
+	board="$board_base"
 
 	if [ -n "$DUMP" ]; then
 		[ -n "$board_base" -a "$board_base" != "$board" ] && echo "BOARD_BASE=$board_base"
