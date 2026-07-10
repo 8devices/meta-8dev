@@ -66,16 +66,12 @@ get_radio_id() {
 		svid="0x3845"
 	fi
 
-	case $svid in
-		0x3844) type="Standard" ;;
-		0x3845) type="Premium" ;;
-		*)      type="unknown" ;;
-	esac
-
-	case $sdid in
-		0x040a) features="2-5GHz 2x4" ;;
-		0x040c) features="2-6GHz 2x4" ;;
-		*)      features="unknown" ;;
+	case "$svid-$sdid" in
+		0x3844-0x040a) type="Standard"; features="2-5GHz 2x4" ;;
+		0x3845-0x040a) type="Premium";  features="2-5GHz 2x4" ;;
+		0x3844-0x040c) type="Standard"; features="2-6GHz 2x4" ;;
+		0x3845-0x040c) type="Premium";  features="2-6GHz 2x4" ;;
+		*)             type="unknown";  features="unknown"    ;;
 	esac
 
 	if [ -n "$DUMP" ]; then
