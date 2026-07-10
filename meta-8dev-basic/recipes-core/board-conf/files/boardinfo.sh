@@ -1,5 +1,16 @@
 #!/bin/sh
 
+# Directory of drop-in board definitions for custom boards. Integrator layers
+# can install a file here named after the CDT board id or the device tree
+# compatible string it describes. Matching files are sourced after the built-in
+# resolution below and expose the board via the BOARD and REV variables:
+#
+#   # /lib/boardinfo.d/0x83000120  (or /lib/boardinfo.d/acme,myboard)
+#   BOARD_NAME=myboard
+#   BOARD_REV=1.0
+#
+BOARDINFO_DIR="${BOARDINFO_DIR:-/lib/boardinfo.d}"
+
 get_board_id() {
 	local board rev compat board_base board_id board_cdt
 
@@ -49,6 +60,19 @@ get_board_id() {
 	esac
 
 	board="$board_base"
+
+	# Custom boards / overrides: source a drop-in file named after the board
+	# id or the compatible string, if present. It exposes BOARD and REV, which
+	# override the values above. The id-named file is applied last so it wins
+	# over a more generic compatible-named one.
+	for key in "$compat" "$board_id"; do
+		[ -n "$key" ] && [ -f "$BOARDINFO_DIR/$key" ] || continue
+		BOARD_NAME="" BOARD_REV=""
+		. "$BOARDINFO_DIR/$key"
+		# Board revision is irrelevant without board name
+		[ -n "$BOARD_NAME" ] || continue
+		board="$BOARD_NAME" rev="$BOARD_REV"
+	done
 
 	if [ -n "$DUMP" ]; then
 		[ -n "$board_base" -a "$board_base" != "$board" ] && echo "BOARD_BASE=$board_base"
