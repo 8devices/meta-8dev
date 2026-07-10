@@ -1,13 +1,20 @@
 #!/bin/sh
 
-# Directory of drop-in board definitions for custom boards. Integrator layers
-# can install a file here named after the CDT board id or the device tree
-# compatible string it describes. Matching files are sourced after the built-in
-# resolution below and expose the board via the BOARD and REV variables:
+# Directory of drop-in definitions for custom boards and radios. Integrator
+# layers can install a file here named after the key it describes; matching
+# files are sourced after the built-in resolution below and expose their values
+# via uppercase variables (each applied only when set, overriding the built-in
+# result). Supported keys and variables:
 #
-#   # /lib/boardinfo.d/0x83000120  (or /lib/boardinfo.d/acme,myboard)
-#   BOARD_NAME=myboard
-#   BOARD_REV=1.0
+#   Boards -- file named after the CDT board id or the device tree compatible:
+#     # /lib/boardinfo.d/0x83000120   (or /lib/boardinfo.d/acme,myboard)
+#     BOARD_NAME=myboard
+#     BOARD_REV=1.0
+#
+#   Radios -- file named after the "svid-sdid" pair:
+#     # /lib/boardinfo.d/0x3844-0x040a
+#     RADIO_TYPE=Custom
+#     RADIO_FEATURES='2-5GHz 2x4'
 #
 BOARDINFO_DIR="${BOARDINFO_DIR:-/lib/boardinfo.d}"
 
@@ -105,6 +112,17 @@ get_radio_id() {
 		0x3845-0x040c) type="Premium";  features="2-6GHz 2x4" ;;
 		*)             type="unknown";  features="unknown"    ;;
 	esac
+
+	# Custom radios / overrides: source a drop-in file named after the
+	# svid-sdid pair, if present. It exposes RADIO_TYPE and RADIO_FEATURES,
+	# which override the values above.
+	key="$svid-$sdid"
+	if [ -n "$svid" ] && [ -n "$sdid" ] && [ -f "$BOARDINFO_DIR/$key" ]; then
+		RADIO_TYPE="" RADIO_FEATURES=""
+		. "$BOARDINFO_DIR/$key"
+		[ -n "$RADIO_TYPE" ] && type="$RADIO_TYPE"
+		[ -n "$RADIO_FEATURES" ] && features="$RADIO_FEATURES"
+	fi
 
 	if [ -n "$DUMP" ]; then
 		echo "RADIO_SVID=$svid"
