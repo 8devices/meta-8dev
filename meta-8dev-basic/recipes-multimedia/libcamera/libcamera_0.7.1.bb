@@ -20,6 +20,8 @@ SRC_URI = " \
         git://git.libcamera.org/libcamera/libcamera.git;protocol=https;branch=master \
         file://0001-libipa-Add-IMX577-sensor-support.patch \
         file://0002-libipa-Add-OV9282-sensor-support.patch \
+        file://imx577.yaml \
+        file://ov9282.yaml \
 "
 
 SRCREV = "183e37362f57ff3ce7493abf0bc6f1b57b931f55"
@@ -80,6 +82,11 @@ do_configure:prepend() {
 do_install:append() {
     chrpath -d ${D}${libdir}/libcamera.so
     chrpath -d ${D}${libexecdir}/libcamera/v4l2-compat.so
+
+    # Per-sensor soft-ISP tuning; the simple pipeline loads <model>.yaml from here.
+    install -d ${D}${datadir}/libcamera/ipa/simple
+    install -m 0644 ${WORKDIR}/imx577.yaml ${WORKDIR}/ov9282.yaml \
+        ${D}${datadir}/libcamera/ipa/simple/
 }
 
 do_package:append() {

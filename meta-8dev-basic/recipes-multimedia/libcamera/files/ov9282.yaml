@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: CC0-1.0
+# OV9282 soft-ISP tuning (monochrome global shutter). No CCM/AWB - the sensor has
+# no colour. Black level 4096 (16-bit scale), matching RPi's ov9281_mono.json
+# (same sensor family); RPi's gamma/AGC tuning is hardware-ISP-specific and has
+# no equivalent in the mainline simple pipeline (no Lut algorithm).
+%YAML 1.1
+---
+version: 1
+algorithms:
+  - BlackLevel:
+      blackLevel: 4096
+  - Agc:
+...
