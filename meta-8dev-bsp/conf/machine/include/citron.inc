@@ -20,7 +20,8 @@ PREFERRED_VERSION_hostapd:citron = "2.10"
 
 # Use libcamera 0.7.1 (meta-8dev-basic) over the meta-multimedia 0.4.0 default,
 # for its colour-temperature AWB + CCM soft ISP. The recipe sets
-# DEFAULT_PREFERENCE="-1", so this override selects it.
+# DEFAULT_PREFERENCE="-1", so this override selects it. Kept :citron (not the
+# 8dev-basic distro) so tobufi/QCS40x stays on the meta-multimedia 0.4.0.
 PREFERRED_VERSION_libcamera:citron = "0.7.1"
 
 # Accept the "commercial" LICENSE_FLAGS for the patent-encumbered codecs in the
