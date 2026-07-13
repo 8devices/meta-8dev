@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "USB Video Class (UVC) devices support"
+define KFEATURE_COMPATIBILITY all
+
+kconf non-hardware uvc-camera.cfg

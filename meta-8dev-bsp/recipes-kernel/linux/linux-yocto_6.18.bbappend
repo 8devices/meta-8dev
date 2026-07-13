@@ -12,6 +12,9 @@ KERNEL_FEATURES:append:citron = "\
     cfg/fs/vfat.scc \
     cfg/8dev/systemd.scc \
     cfg/8dev/squashfs.scc \
+    cfg/8dev/uvc-camera.scc \
+    cfg/8dev/qcs6490-camera.scc \
+    cfg/8dev/qcs6490-venus.scc \
 "
 
 # Prevent upstream features/netfilter/netfilter.scc from being included

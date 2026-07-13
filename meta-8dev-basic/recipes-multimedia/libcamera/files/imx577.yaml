@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: CC0-1.0
+# IMX577 soft-ISP tuning.
+#
+# The CCM below is ported from the Raspberry Pi imx477 tuning (same Sony die),
+# but is DISABLED: the mainline soft ISP's AWB is unreliable on the sc7280 CAMSS
+# raw path, and applying this CCM to a mis-white-balanced frame produces a strong
+# magenta cast (verified far worse than the identity CCM). Re-enable it only once
+# AWB is trustworthy (or after a board-specific re-tune with fixed WB gains).
+%YAML 1.1
+---
+version: 1
+algorithms:
+  - BlackLevel:
+      blackLevel: 4096
+  - Awb:
+  # - Ccm:
+  #     ccms:
+  #       - ct: 2850
+  #         ccm: [ 1.97469, -0.71439, -0.26031, -0.43521, 2.09769, -0.66248, -0.04826, -0.84642, 1.89468 ]
+  #       - ct: 2960
+  #         ccm: [ 2.12952, -0.91185, -0.21768, -0.38018, 1.90789, -0.52771, 0.03988, -1.10079, 2.06092 ]
+  #       - ct: 3580
+  #         ccm: [ 2.03422, -0.80048, -0.23374, -0.39089, 1.97221, -0.58132, -0.08969, -0.61439, 1.70408 ]
+  #       - ct: 4559
+  #         ccm: [ 2.15423, -0.98143, -0.17279, -0.38131, 2.14763, -0.76632, -0.10069, -0.54383, 1.64452 ]
+  #       - ct: 5881
+  #         ccm: [ 2.18464, -0.95493, -0.22971, -0.36826, 2.00298, -0.63471, -0.15219, -0.38055, 1.53274 ]
+  #       - ct: 7600
+  #         ccm: [ 2.30687, -0.97295, -0.33392, -0.30872, 2.32779, -1.01908, -0.17761, -0.55891, 1.73651 ]
+  - Adjust:
+  - Agc:
+...

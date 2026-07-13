@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "QCS6490 CAMSS MIPI-CSI camera (IMX577)"
+define KFEATURE_COMPATIBILITY all
+
+kconf non-hardware qcs6490-camera.cfg

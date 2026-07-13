@@ -12,6 +12,9 @@ CORE_IMAGE_EXTRA_INSTALL:8dev-basic:append = " base-network"
 # Citron only: dmidecode for SMBIOS/DMI inspection on the UEFI/UKI boot path.
 CORE_IMAGE_EXTRA_INSTALL:append:citron = " dmidecode"
 
+# Citron only: USB (UVC) camera -> network video streaming via GStreamer.
+IMAGE_FEATURES:append:citron = " video-streaming"
+
 inherit 8dev-image
 inherit core-image
 

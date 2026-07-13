@@ -1,0 +1,55 @@
+From 660b2afa6ad0dab894f8de134cf6551271616a81 Mon Sep 17 00:00:00 2001
+From: 8devices <support@8devices.com>
+Date: Thu, 9 Jul 2026 22:14:08 +0300
+Subject: [PATCH] libipa: Add IMX577 sensor support (shares IMX477 die)
+
+---
+ src/ipa/libipa/camera_sensor_helper.cpp           | 10 ++++++++++
+ src/libcamera/sensor/camera_sensor_properties.cpp | 10 ++++++++++
+ 2 files changed, 20 insertions(+)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index e3e3e53..c969318 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -642,6 +642,16 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("imx477", CameraSensorHelperImx477)
+ 
++class CameraSensorHelperImx577 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperImx577()
++	{
++		gain_ = AnalogueGainLinear{ 0, 1024, -1, 1024 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("imx577", CameraSensorHelperImx577)
++
+ class CameraSensorHelperImx708 : public CameraSensorHelper
+ {
+ public:
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index b217363..31b6f75 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -291,6 +291,16 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 				.hblankDelay = 3
+ 			},
+ 		} },
++		{ "imx577", {
++			.unitCellSize = { 1550, 1550 },
++			.testPatternModes = {},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 3,
++				.hblankDelay = 3
++			},
++		} },
+ 		{ "imx519", {
+ 			.unitCellSize = { 1220, 1220 },
+ 			.testPatternModes = {
+-- 
+2.43.0
+
