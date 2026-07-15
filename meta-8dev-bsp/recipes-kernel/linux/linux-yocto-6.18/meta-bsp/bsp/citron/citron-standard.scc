@@ -25,3 +25,4 @@ include bsp/citron/storage.scc
 
 patch patches/pci-qcom-force-synchronous-probe.patch
 patch patches/qcom-scm-reboot-edl-enters-download-mode.patch
+patch patches/media-qcom-camss-bind-sensors-independently.patch

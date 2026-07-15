@@ -1,0 +1,157 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Justinas Grauslis <justinas@8devices.com>
+Date: Wed, 15 Jul 2026 12:00:00 +0300
+Subject: [PATCH] media: qcom: camss: bind CSI sensors independently
+
+The qcom-camss driver adds one v4l2-async fwnode per DT camss port and
+only creates the sensor->CSIPHY media links and registers the sensor
+subdev device nodes from its .complete notifier callback. The v4l2-async
+core invokes .complete only after *every* declared fwnode has bound.
+
+On a carrier that declares more than one CSI sensor (robovision:
+IMX577 on CSIPHY0 + OV9282 on CSIPHY1) this couples the sensors: if one
+sensor is physically absent its I2C/CSI endpoint never probes, its async
+fwnode never binds, .complete never runs, and the sensor that *is*
+present gets neither a media link nor a /dev/v4l-subdev node. The result
+is that detaching one sensor makes the remaining one undetectable too.
+
+Move the per-sensor link creation and subdev-node registration into the
+.bound callback so each sensor is wired up and exposed as soon as it
+binds, independent of the others. .complete is kept as a safety net that
+only re-registers nodes (the call skips subdevs that already have a
+devnode), so the all-sensors-present path is unchanged.
+
+Reproduced and verified on 8devices Robonode Vision (QCS6490): with one
+sensor detached the other now enumerates normally; with both attached
+the media graph is identical to before.
+
+Signed-off-by: Justinas Grauslis <justinas@8devices.com>
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -3954,6 +3954,47 @@ static void camss_unregister_entities(struct camss *camss)
+ 		msm_vfe_unregister_entities(&camss->vfe[i]);
+ }
+ 
++/*
++ * camss_link_sensor_entity - Link a bound sensor subdev to its CSIPHY
++ * @camss: CAMSS device
++ * @sd: the sensor subdev (host_priv points at its target csiphy_device)
++ *
++ * Return 0 on success or a negative error code on failure
++ */
++static int camss_link_sensor_entity(struct camss *camss,
++				    struct v4l2_subdev *sd)
++{
++	struct csiphy_device *csiphy = sd->host_priv;
++	struct media_entity *input, *sensor;
++	unsigned int i;
++	int ret;
++
++	if (!csiphy)
++		return 0;
++
++	input = &csiphy->subdev.entity;
++	sensor = &sd->entity;
++
++	for (i = 0; i < sensor->num_pads; i++) {
++		if (sensor->pads[i].flags & MEDIA_PAD_FL_SOURCE)
++			break;
++	}
++	if (i == sensor->num_pads) {
++		dev_err(camss->dev, "No source pad in external entity\n");
++		return -EINVAL;
++	}
++
++	ret = media_create_pad_link(sensor, i, input,
++				    MSM_CSIPHY_PAD_SINK,
++				    MEDIA_LNK_FL_IMMUTABLE | MEDIA_LNK_FL_ENABLED);
++	if (ret < 0) {
++		camss_link_err(camss, sensor->name, input->name, ret);
++		return ret;
++	}
++
++	return 0;
++}
++
+ static int camss_subdev_notifier_bound(struct v4l2_async_notifier *async,
+ 				       struct v4l2_subdev *subdev,
+ 				       struct v4l2_async_connection *asd)
+@@ -3963,50 +4004,41 @@ static int camss_subdev_notifier_bound(struct v4l2_async_notifier *async,
+ 		container_of(asd, struct camss_async_subdev, asd);
+ 	u8 id = csd->interface.csiphy_id;
+ 	struct csiphy_device *csiphy = &camss->csiphy[id];
++	int ret;
+ 
+ 	csiphy->cfg.csi2 = &csd->interface.csi2;
+ 	subdev->host_priv = csiphy;
+ 
+-	return 0;
++	/*
++	 * 8devices: bind each sensor independently. The stock driver creates
++	 * the sensor->CSIPHY links and registers the sensor subdev device
++	 * nodes only from .complete, which the v4l2-async core calls just once
++	 * *every* fwnode declared in DT has bound. On a carrier with several
++	 * CSI sensors (robovision: IMX577 + OV9282) detaching one sensor means
++	 * its fwnode never binds, .complete never runs, and the sensor that is
++	 * still attached gets no link and no /dev/v4l-subdev node either - so a
++	 * single missing sensor takes down all of them.
++	 *
++	 * Wire up and expose this sensor as soon as it binds instead; a missing
++	 * sensor no longer blocks the ones that are present.
++	 */
++	ret = camss_link_sensor_entity(camss, subdev);
++	if (ret < 0)
++		return ret;
++
++	return v4l2_device_register_subdev_nodes(&camss->v4l2_dev);
+ }
+ 
+ static int camss_subdev_notifier_complete(struct v4l2_async_notifier *async)
+ {
+ 	struct camss *camss = container_of(async, struct camss, notifier);
+-	struct v4l2_device *v4l2_dev = &camss->v4l2_dev;
+-	struct v4l2_subdev *sd;
+-
+-	list_for_each_entry(sd, &v4l2_dev->subdevs, list) {
+-		struct csiphy_device *csiphy = sd->host_priv;
+-		struct media_entity *input, *sensor;
+-		unsigned int i;
+-		int ret;
+-
+-		if (!csiphy)
+-			continue;
+-
+-		input = &csiphy->subdev.entity;
+-		sensor = &sd->entity;
+-
+-		for (i = 0; i < sensor->num_pads; i++) {
+-			if (sensor->pads[i].flags & MEDIA_PAD_FL_SOURCE)
+-				break;
+-		}
+-		if (i == sensor->num_pads) {
+-			dev_err(camss->dev,
+-				"No source pad in external entity\n");
+-			return -EINVAL;
+-		}
+-
+-		ret = media_create_pad_link(sensor, i, input,
+-					    MSM_CSIPHY_PAD_SINK,
+-					    MEDIA_LNK_FL_IMMUTABLE | MEDIA_LNK_FL_ENABLED);
+-		if (ret < 0) {
+-			camss_link_err(camss, sensor->name, input->name, ret);
+-			return ret;
+-		}
+-	}
+ 
++	/*
++	 * 8devices: links and subdev nodes are now created per-sensor in
++	 * .bound (above). This only runs when every declared sensor is present;
++	 * re-register nodes as a harmless safety net - the call skips subdevs
++	 * that already have a devnode.
++	 */
+ 	return v4l2_device_register_subdev_nodes(&camss->v4l2_dev);
+ }
+ 
+-- 
+2.43.0
+
