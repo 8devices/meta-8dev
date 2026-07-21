@@ -39,14 +39,6 @@ get_board_id() {
 		compat=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -n 1)
 	fi
 
-	# Initial base resolution
-	case "$compat" in
-		"8devices,tobufi")     board_base="tobufi-som" ;;
-		"8devices,tobufi-dvk") board_base="tobufi-dvk" ;;
-		"8devices,robonode")   board_base="robonode"   ;;
-		"8devices,robovision") board_base="robovision" ;;
-	esac
-
 	case "$board_id" in
 		0x80000520) board_base="tobufi-som"; rev="5.0" ;;
 		0x81000320) board_base="tobufi-dvk"; rev="3.0" ;;
@@ -66,7 +58,14 @@ get_board_id() {
 			;;
 	esac
 
-	board="$board_base"
+	# Use board compatible as primary board name source
+	case "$compat" in
+		"8devices,tobufi")     board="tobufi"     ;;
+		"8devices,tobufi-dvk") board="tobufi-dvk" ;;
+		"8devices,robonode")   board="robonode"   ;;
+		"8devices,robovision") board="robovision" ;;
+		*)                     board="$compat"    ;;
+	esac
 
 	# Custom boards / overrides: source a drop-in file named after the board
 	# id or the compatible string, if present. It exposes BOARD and REV, which
