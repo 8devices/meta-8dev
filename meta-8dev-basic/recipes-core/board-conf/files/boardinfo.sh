@@ -99,9 +99,10 @@ get_radio_id() {
 	sdid=$(cat "/sys/devices/platform/soc@0/10000000.pci/pci0000:00/0000:00:00.0/0000:01:00.0/subsystem_device" 2>/dev/null)
 
 	# XXX: mixed radio IDs handling
-	if [ "$sdid" = "0x3845" ]; then
+	if [ "$sdid" = "0x3845" ] || [ "$sdid" = "0x3841" ]; then
+		stmp="$sdid"
 		sdid="$svid"
-		svid="0x3845"
+		svid="$stmp"
 	fi
 
 	case "$svid-$sdid" in
