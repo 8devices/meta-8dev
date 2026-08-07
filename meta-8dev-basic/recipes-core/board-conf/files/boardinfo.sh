@@ -19,14 +19,19 @@
 BOARDINFO_DIR="${BOARDINFO_DIR:-/lib/boardinfo.d}"
 
 get_board_id() {
-	local board rev compat board_base board_id board_cdt
+	local board rev compat board_base board_id board_cdt part
 
 	# Board ID comes from the CDT. When absent (legacy board), fall back to
-	# the board-type default -- QCS405 IOT board id 0x20.
-	if [ -e /dev/disk/by-partlabel/cdt ]; then
-		board_id=$(dd if=/dev/disk/by-partlabel/cdt bs=1 skip=$((0x17)) count=4 2>/dev/null \
+	# the board-type default -- QCS405 IOT board id 0x20. The partition is
+	# resolved from the kernel's GPT parse in sysfs (PARTNAME) instead of the
+	# udev by-partlabel symlink, so the lookup also works early in boot,
+	# before udev has created the symlinks.
+	for part in /sys/class/block/*; do
+		grep -qs '^PARTNAME=cdt$' "$part/uevent" || continue
+		board_id=$(dd if="/dev/${part##*/}" bs=1 skip=$((0x17)) count=4 2>/dev/null \
 			| od -H | awk 'NR==1{print $2}')
-	fi
+		break
+	done
 	if [ -n "$board_id" ]; then
 		board_id="0x$board_id"
 		board_cdt="yes"
