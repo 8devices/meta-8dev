@@ -22,7 +22,8 @@ IMAGE_FSTYPES += "ext4-sparse"
 EXTRA_IMAGECMD:ext4-sparse += "-b 4096"
 EXTRA_IMAGECMD:ext4-sparse += "-l 681574400"
 
-IMAGE_FSTYPES += "ext4"
+IMAGE_FSTYPES += "ext4.gz"
+# intermediate for gzip uses ext4 flags
 EXTRA_IMAGECMD:ext4 += "-b 4096"
 
 IMAGE_ROOTFS_ALIGNMENT = "4"
