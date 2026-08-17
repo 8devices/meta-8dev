@@ -9,9 +9,10 @@ software =
                 a: {
                         images: (
                                 {
-                                        filename = "8dev-image-base-@@MACHINE@@.rootfs.ext4";
+                                        filename = "8dev-image-base-@@MACHINE@@.rootfs.ext4.gz";
                                         device = "/dev/disk/by-partlabel/system_a";
                                         type = "raw";
+                                        compressed = "zlib";
                                         installed-directly = true;
                                 },
                                 {
@@ -31,9 +32,10 @@ software =
                 b: {
                         images: (
                                 {
-                                        filename = "8dev-image-base-@@MACHINE@@.rootfs.ext4";
+                                        filename = "8dev-image-base-@@MACHINE@@.rootfs.ext4.gz";
                                         device = "/dev/disk/by-partlabel/system_b";
                                         type = "raw";
+                                        compressed = "zlib";
                                         installed-directly = true;
                                 },
                                 {
