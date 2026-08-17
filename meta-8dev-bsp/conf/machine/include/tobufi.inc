@@ -52,3 +52,6 @@ EXTRA_IMAGEDEPENDS += "flashtools"
 
 KERNEL_IMAGETYPES:remove = "Image"
 KERNEL_IMAGETYPE = "Image.gz"
+
+# Exclude linux kernel from rootfs
+RRECOMMENDS:${KERNEL_PACKAGE_NAME}-base = ""

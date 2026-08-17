@@ -43,3 +43,6 @@ BAD_RECOMMENDATIONS:append = " \
 "
 
 SERIAL_CONSOLES = "115200;ttyMSM0"
+
+# Exclude linux kernel from rootfs
+RRECOMMENDS:${KERNEL_PACKAGE_NAME}-base = ""
