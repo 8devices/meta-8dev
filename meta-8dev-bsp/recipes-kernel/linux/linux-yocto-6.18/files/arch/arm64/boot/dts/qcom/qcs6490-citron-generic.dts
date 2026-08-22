@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+/dts-v1/;
+
+#include "qcs6490-citron.dtsi"
+
+/ {
+	model = "8devices Citron SOM Generic Board";
+	compatible = "8devices,citron-generic", "8devices,citron",
+		"qcom,qcm6490";
+
+	qcom,msm-id = <497 0x10000>, <498 0x10000>, <475 0x10000>, <515 0x10000>;
+	qcom,board-id = <0x00010020 0x80>,	/* variant + subtype cell */
+			<0x80010020 0x80>;	/* subtype also in bits 31-24 */
+};
+
+/* USB0 = SoC usb_1 (a600000): fixed device/gadget. +5V source held off, no ID. */
+&usb_1 {
+	dr_mode = "peripheral";
+};
+
+/*
+ * No Type-C mux / pmic-glink on this carrier and the SS lanes arrive at a fixed
+ * orientation, so delete the orientation-switch left at the sc7280 default.
+ */
+&usb_1_qmpphy {
+	/delete-property/ orientation-switch;
+};
+
+/*
+ * USB VBUS PWR_EN pins for the UCS2113 load switch, held at fixed levels via the
+ * regulators below: GPIO52 (USB0) low => 5V off (usb0_vbus left unenabled),
+ * GPIO53 (USB1) high => 5V on (usb1_vbus always-on).
+ */
+&tlmm {
+	/* GPIO52 = USB0_PWR_SW (held low / 5V off). */
+	usb0_vbus_en_state: usb0-vbus-en-state {
+		pins = "gpio52";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+};
+
+/ {
+	usb0_vbus: regulator-usb0-vbus {
+		compatible = "regulator-fixed";
+		regulator-name = "USB0_VBUS";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&tlmm 52 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb0_vbus_en_state>;
+	};
+};

@@ -5,19 +5,23 @@
 #include "qcs6490-citron.dtsi"
 
 / {
-	model = "8Devices Robonode Vision";
+	model = "8devices Robonode Vision";
 	compatible = "8devices,robovision", "8devices,citron",
 		"qcom,qcm6490";
 
-	/*
-	 * Read by the Qualcomm bootloader DTB selector (not Linux) to pick this
-	 * DTB for the running hardware. msm-id = <soc-id soc-rev>: the Kodiak SoC
-	 * family (475 SM, 497 QCM, 498 QCS, 515 SM-LTE) 6490, rev >= 1.0.
-	 * board-id = <0x00PMPmPH subtype>: hw-platform 0x20, version 1.1, subtype 2.
-	 * Must match what the CDT (citron_cdt.bin) reports or the DTB is skipped.
-	 */
 	qcom,msm-id = <497 0x10000>, <498 0x10000>, <475 0x10000>, <515 0x10000>;
-	qcom,board-id = <0x010120 2>;
+
+	/*
+	 * Two board-id pairs on purpose. The variant word is <unused:8 major:8
+	 * minor:8 platform_type:8>, subtype in the second cell -- but some Qualcomm
+	 * loaders expect the subtype packed into the unused bits and ignore the
+	 * second cell. Declaring both (the property takes up to 8 pairs) means one
+	 * matches whichever form this loader reads, without either pair carrying a
+	 * stale field. Values must agree with the CDT flashed by edl_flash.py -b.
+	 * Once the selected DTB is confirmed on hardware, drop the unused pair.
+	 */
+	qcom,board-id = <0x00010020 0x82>,	/* variant + subtype cell */
+			<0x82010020 0x82>;	/* subtype also in bits 31-24 */
 };
 
 /*

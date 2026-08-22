@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+/dts-v1/;
+
+#include "qcs6490-citron-robovision.dts"
+
+/ {
+	model = "8devices Robonode Vision Rev 2.0";
+
+	compatible = "8devices,robovision-rev2",
+		"8devices,robovision",
+		"8devices,citron",
+		"qcom,qcm6490";
+
+	qcom,board-id = <0x00020020 0x82>,	/* variant + subtype cell */
+			<0x82020020 0x82>;	/* subtype also in bits 31-24 */
+};

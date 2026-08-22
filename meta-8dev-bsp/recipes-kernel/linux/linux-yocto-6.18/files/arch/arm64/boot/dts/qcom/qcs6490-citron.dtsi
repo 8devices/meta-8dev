@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 /*
- * 8Devices Citron SOM - baseline device tree. Describes only what is on the SOM
+ * 8devices Citron SOM - baseline device tree. Describes only what is on the SOM
  * and required to boot: QCS6490 SoC, the PM7325/PM8350C/PMK8350 PMICs and rails,
  * the DDR/firmware memory map, protected clocks, eMMC, debug UARTs and USB.
  * Everything else is left at the sc7280.dtsi defaults (disabled) for the carrier
@@ -33,7 +33,7 @@
 /delete-node/ &xbl_mem;
 
 / {
-	model = "8Devices Citron SOM";
+	model = "8devices Citron SOM";
 	compatible = "8devices,citron", "qcom,qcm6490";
 	chassis-type = "embedded";
 
