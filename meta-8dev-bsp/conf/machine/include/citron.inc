@@ -30,6 +30,7 @@ LICENSE_FLAGS_ACCEPTED:append = " commercial_openh264 commercial_ffmpeg commerci
 
 MACHINE_ESSENTIAL_EXTRA_RRECOMMENDS:append = " \
     qbootctl \
+    tlvstore \
 "
 
 BAD_RECOMMENDATIONS:append = " \
