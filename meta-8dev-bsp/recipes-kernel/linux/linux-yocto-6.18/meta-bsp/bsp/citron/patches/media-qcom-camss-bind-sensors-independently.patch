@@ -8,7 +8,7 @@ only creates the sensor->CSIPHY media links and registers the sensor
 subdev device nodes from its .complete notifier callback. The v4l2-async
 core invokes .complete only after *every* declared fwnode has bound.
 
-On a carrier that declares more than one CSI sensor (robovision:
+On a carrier that declares more than one CSI sensor (citron:
 IMX577 on CSIPHY0 + OV9282 on CSIPHY1) this couples the sensors: if one
 sensor is physically absent its I2C/CSI endpoint never probes, its async
 fwnode never binds, .complete never runs, and the sensor that *is*
@@ -91,7 +91,7 @@ Signed-off-by: Justinas Grauslis <justinas@8devices.com>
 +	 * the sensor->CSIPHY links and registers the sensor subdev device
 +	 * nodes only from .complete, which the v4l2-async core calls just once
 +	 * *every* fwnode declared in DT has bound. On a carrier with several
-+	 * CSI sensors (robovision: IMX577 + OV9282) detaching one sensor means
++	 * CSI sensors (citron: IMX577 + OV9282) detaching one sensor means
 +	 * its fwnode never binds, .complete never runs, and the sensor that is
 +	 * still attached gets no link and no /dev/v4l-subdev node either - so a
 +	 * single missing sensor takes down all of them.
