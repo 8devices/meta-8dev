@@ -12,6 +12,5 @@
 		"8devices,citron",
 		"qcom,qcm6490";
 
-	qcom,board-id = <0x00010020 0x81>,	/* variant + subtype cell */
-			<0x81010020 0x81>;	/* subtype also in bits 31-24 */
+	qcom,board-id = <0x00010020 0x641>;
 };

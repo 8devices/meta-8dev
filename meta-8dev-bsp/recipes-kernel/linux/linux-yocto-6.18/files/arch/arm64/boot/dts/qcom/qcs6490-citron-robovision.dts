@@ -12,16 +12,21 @@
 	qcom,msm-id = <497 0x10000>, <498 0x10000>, <475 0x10000>, <515 0x10000>;
 
 	/*
-	 * Two board-id pairs on purpose. The variant word is <unused:8 major:8
-	 * minor:8 platform_type:8>, subtype in the second cell -- but some Qualcomm
-	 * loaders expect the subtype packed into the unused bits and ignore the
-	 * second cell. Declaring both (the property takes up to 8 pairs) means one
-	 * matches whichever form this loader reads, without either pair carrying a
-	 * stale field. Values must agree with the CDT flashed by edl_flash.py -b.
-	 * Once the selected DTB is confirmed on hardware, drop the unused pair.
+	 * Cell 0 is <unused:8 major:8 minor:8 platform_type:8>, cell 1 is
+	 * <ddr_class:3 subtype:8> at bits 10:8 and 7:0. The subtype lives in
+	 * cell 1 only; the legacy form that packed it into cell 0's top byte
+	 * is not used here.
+	 *
+	 * The DDR class is not optional. UEFI's DTB selector compares it for
+	 * equality alongside chip-id, platform and subtype, and this SoM reports
+	 * class 6, so cell 1 must be 0x6xx. Leaving it out makes every DTB in
+	 * combined-dtb.dtb fail to match; UEFI then falls back to its built-in
+	 * RB3gen2 tree, which has no eMMC node, and the rootfs never appears.
+	 * Boards that ship different DRAM need a different value here.
+	 *
+	 * Values must agree with the CDT flashed by edl_flash.py -b.
 	 */
-	qcom,board-id = <0x00010020 0x82>,	/* variant + subtype cell */
-			<0x82010020 0x82>;	/* subtype also in bits 31-24 */
+	qcom,board-id = <0x00010020 0x642>;
 };
 
 /*
