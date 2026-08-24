@@ -32,13 +32,16 @@ get_board_id() {
 		compat=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -n 1)
 	fi
 
+	# Subtypes live in the 0x40..0x63 OEM window: TZ rejects a subtype of 100 or
+	# more, and that range also skips the PM8008 probe in UEFI. Keep in step with
+	# qcom,board-id in the citron device trees and the CDTs of the same name.
 	case "$board_id" in
 		0x02010120) board_base="citron-prototype"; rev="1.0" ;; # Early prototype boards
-		0x80010020) board_base="citron-generic";   rev="1.0" ;; # Pre-flashed SoMs for clients
-		0x81010020) board_base="citron-dvk";       rev="1.0" ;;
-		0x81020020) board_base="citron-dvk";       rev="2.0" ;;
-		0x82010020) board_base="robovision";       rev="1.0" ;;
-		0x82020020) board_base="robovision";       rev="2.0" ;;
+		0x40010020) board_base="citron-generic";   rev="1.0" ;; # Pre-flashed SoMs for clients
+		0x41010020) board_base="citron-dvk";       rev="1.0" ;;
+		0x41020020) board_base="citron-dvk";       rev="2.0" ;;
+		0x42010020) board_base="robovision";       rev="1.0" ;;
+		0x42020020) board_base="robovision";       rev="2.0" ;;
 	esac
 
 	# Use board compatible as primary board name source
