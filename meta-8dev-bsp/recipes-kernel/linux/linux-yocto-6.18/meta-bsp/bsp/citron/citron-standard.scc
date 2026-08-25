@@ -22,6 +22,7 @@ include bsp/qcs6490/usb.scc
 include bsp/qcs6490/usb-gadget.scc
 include bsp/qcs6490/usb-host.scc
 include bsp/citron/storage.scc
+include bsp/citron/carrier.scc
 include bsp/citron/usb-phy.scc
 include bsp/citron/rtl8139.scc
 include bsp/citron/qcn9274.scc

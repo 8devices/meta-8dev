@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "Citron carrier peripherals (CSI4 i2c-gpio, PMIC power key)"
+define KFEATURE_COMPATIBILITY board
+
+kconf hardware carrier.cfg
