@@ -3,6 +3,7 @@
 /dts-v1/;
 
 #include "qcs6490-citron.dtsi"
+#include <dt-bindings/leds/common.h>
 
 / {
 	model = "8devices Robonode Vision";
@@ -27,6 +28,46 @@
 	 * Values must agree with the CDT flashed by edl_flash.py -b.
 	 */
 	qcom,board-id = <0x00010020 0x642>;
+
+	/*
+	 * RGB status LED, 3 gpio-leds channels. Common-anode LED (Wurth 155124M173200)
+	 * with cathodes low-side switched by DMG1012T N-FETs, so channels are active-HIGH.
+	 */
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&rgb_led_state>;
+
+		led-red {
+			gpios = <&tlmm 117 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_RED>;
+			function = LED_FUNCTION_INDICATOR;
+			default-state = "off";
+		};
+
+		led-green {
+			gpios = <&tlmm 84 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_INDICATOR;
+			default-state = "off";
+		};
+
+		led-blue {
+			gpios = <&tlmm 125 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_BLUE>;
+			function = LED_FUNCTION_INDICATOR;
+			default-state = "off";
+		};
+	};
+};
+
+&tlmm {
+	rgb_led_state: rgb-led-state {
+		pins = "gpio117", "gpio84", "gpio125";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
 };
 
 /*
@@ -141,10 +182,12 @@
 	clock-frequency = <400000>;
 	status = "okay";
 
+	/* Main array @0x50; powered from +1V8_VREG_L8C; WC=gpio46 write-protects (at24 wp-gpios). */
 	eeprom@50 {
 		compatible = "atmel,24c256";
 		reg = <0x50>;
 		pagesize = <64>;
+		vcc-supply = <&vreg_l8c_1p62>;
 		wp-gpios = <&tlmm 46 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&eeprom_wc_state>;
