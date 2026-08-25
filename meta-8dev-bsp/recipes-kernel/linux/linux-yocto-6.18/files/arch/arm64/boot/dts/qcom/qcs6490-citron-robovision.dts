@@ -544,6 +544,168 @@
 	status = "okay";
 };
 
+/*
+ * DISP0 (MIPI-DSI0) -> Waveshare 23448, an 8" 1280x800 IPS DSI panel ("8inch DSI
+ * LCD (C)", the Raspberry Pi form factor). Connector pins: SDA/SCL=gpio56/57 (i2c14)
+ * RST=61 BL_EN=39 STBY/PDN=96 START=38 ADP_PRESENT=105 RDY/INT=36 BL_PWM=pm8350c
+ * gpio8; interface supply +1V8_VREG_L18B=vreg_l18b_1p8.
+ *
+ * The panel ships with an adapter board that is a DSI-to-DPI bridge on the
+ * connector's I2C bus. It sequences the panel and dims the backlight over I2C
+ * registers, so none of the DISP0 control pins are needed to drive the panel: only
+ * RST (active low) and BL_EN are held de-asserted/on, for adapters that pass them
+ * through, and the rest stay documented-but-unconsumed pin states.
+ *
+ * The panel runs on two of the four DSI0 data lanes.
+ */
+&dispcc {
+	status = "okay";
+};
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi {
+	vdda-supply = <&vreg_l6b_1p2>;
+	status = "okay";
+};
+
+&mdss_dsi_phy {
+	vdds-supply = <&vreg_l10c_0p88>;
+	status = "okay";
+};
+
+&mdss_dsi0_out {
+	remote-endpoint = <&ws_bridge_in>;
+	data-lanes = <0 1>;
+};
+
+&i2c14 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/*
+	 * power-supply is the connector's +1V8 interface rail: the panel's own +5V is
+	 * unswitched on the carrier, and the driver never touches the supply, but the
+	 * binding requires one.
+	 */
+	bridge@45 {
+		compatible = "waveshare,dsi2dpi";
+		reg = <0x45>;
+		power-supply = <&vreg_l18b_1p8>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&disp0_ctrl_state>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				ws_bridge_in: endpoint {
+					data-lanes = <1 2>;
+					remote-endpoint = <&mdss_dsi0_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				ws_bridge_out: endpoint {
+					remote-endpoint = <&ws_panel_in>;
+				};
+			};
+		};
+	};
+};
+
+/ {
+	/*
+	 * Dumb DPI panel behind the bridge. Timings are the vendor's 1280x800 60 Hz
+	 * mode (shared by their 8" and 10.1" panels): 83.333 MHz pixel clock,
+	 * h 1280 +156 +20 +40, v 800 +40 +48 +40.
+	 */
+	panel {
+		compatible = "waveshare,23448", "panel-dpi";
+		power-supply = <&vreg_l18b_1p8>;
+		width-mm = <171>;
+		height-mm = <107>;
+
+		panel-timing {
+			clock-frequency = <83333000>;
+			hactive = <1280>;
+			hfront-porch = <156>;
+			hsync-len = <20>;
+			hback-porch = <40>;
+			vactive = <800>;
+			vfront-porch = <40>;
+			vsync-len = <48>;
+			vback-porch = <40>;
+			hsync-active = <0>;
+			vsync-active = <0>;
+			de-active = <1>;
+			pixelclk-active = <1>;
+		};
+
+		port {
+			ws_panel_in: endpoint {
+				remote-endpoint = <&ws_bridge_out>;
+			};
+		};
+	};
+};
+
+&tlmm {
+	/* DISP0 panel reset (61, active low) + backlight enable (39), applied at bridge probe. */
+	disp0_ctrl_state: disp0-ctrl-state {
+		pins = "gpio61", "gpio39";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+
+	/* DISP0 outputs this panel does not use: STBY/PDN(96), START(38). */
+	disp0_misc_state: disp0-misc-state {
+		pins = "gpio96", "gpio38";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	/* DISP0 status inputs: ADP_PRESENT(105), RDY/INT(36). */
+	disp0_status_state: disp0-status-state {
+		pins = "gpio105", "gpio36";
+		function = "gpio";
+		bias-pull-up;
+	};
+
+	/* RGB status LED channels: RED(117), GREEN(84), BLUE(125). */
+	rgb_led_state: rgb-led-state {
+		pins = "gpio117", "gpio84", "gpio125";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+};
+
 &venus {
 	status = "okay";
+};
+
+/*
+ * Sever the DP<->qmpphy of-graph link on both ends so a DP lookup returns a clean
+ * -ENODEV: there is no Type-C connector here, and the qmpphy DP aux_bridge would
+ * otherwise make DP defer forever, leaving the DPU without /dev/dri/card0. DP itself
+ * is only enabled by the camx overlay, so this is inert otherwise. It lives here
+ * rather than in the overlay because overlays cannot delete base tree properties.
+ */
+&mdss_dp_out {
+	/delete-property/ remote-endpoint;
+};
+
+&usb_dp_qmpphy_dp_in {
+	/delete-property/ remote-endpoint;
 };

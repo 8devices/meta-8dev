@@ -9,11 +9,6 @@
  * Self-contained: qcs6490-citron-dvk-rev2.dts includes this file, the way
  * robovision-rev2 includes robovision. Cameras are described inline - this branch
  * builds one DTB per board with no overlays, so there is no CAMERA_STACK dtso.
- *
- * Not carried over from the DSI display work: DISP0/DSI0, the Waveshare bridge and
- * panel, and the DP of-graph severing that goes with them. This kernel has no DRM
- * stack enabled (no CONFIG_DRM_MSM), so the nodes would bind nothing; enabling the
- * display needs DRM_MSM + DRM_WAVESHARE_BRIDGE + DRM_PANEL_SIMPLE first.
  */
 
 /dts-v1/;
@@ -804,6 +799,150 @@
 	status = "okay";
 };
 
+/*
+ * DISP0 (DSI0) -> Waveshare 23448, 8" 1280x800 IPS, on 2 of the 4 data lanes.
+ * Connector: SDA/SCL=gpio56/57 (i2c14) RST=61 BL_EN=39 STBY/PDN=96 START=38
+ * ADP_PRESENT=105 RDY/INT=36 BL_PWM=pm8350c gpio8, interface rail L2C.
+ * Its adapter board is a DSI-to-DPI bridge that sequences the panel and dims the
+ * backlight over I2C, so no DISP0 control pin is needed; RST/BL_EN are only held
+ * de-asserted for adapters that pass them through, the rest are unconsumed.
+ */
+&dispcc {
+	status = "okay";
+};
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi {
+	vdda-supply = <&vreg_l6b_1p2>;
+	status = "okay";
+};
+
+&mdss_dsi_phy {
+	vdds-supply = <&vreg_l10c_0p88>;
+	status = "okay";
+};
+
+&mdss_dsi0_out {
+	remote-endpoint = <&ws_bridge_in>;
+	data-lanes = <0 1>;
+};
+
+&i2c14 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/* power-supply is required by the binding; the driver never touches it. */
+	bridge@45 {
+		compatible = "waveshare,dsi2dpi";
+		reg = <0x45>;
+		power-supply = <&vreg_l2c_1p62>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&disp0_ctrl_state>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				ws_bridge_in: endpoint {
+					data-lanes = <1 2>;
+					remote-endpoint = <&mdss_dsi0_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				ws_bridge_out: endpoint {
+					remote-endpoint = <&ws_panel_in>;
+				};
+			};
+		};
+	};
+};
+
+/ {
+	/* Dumb DPI panel behind the bridge; vendor 1280x800 60 Hz timings. */
+	panel {
+		compatible = "waveshare,23448", "panel-dpi";
+		power-supply = <&vreg_l2c_1p62>;
+		width-mm = <171>;
+		height-mm = <107>;
+
+		panel-timing {
+			clock-frequency = <83333000>;
+			hactive = <1280>;
+			hfront-porch = <156>;
+			hsync-len = <20>;
+			hback-porch = <40>;
+			vactive = <800>;
+			vfront-porch = <40>;
+			vsync-len = <48>;
+			vback-porch = <40>;
+			hsync-active = <0>;
+			vsync-active = <0>;
+			de-active = <1>;
+			pixelclk-active = <1>;
+		};
+
+		port {
+			ws_panel_in: endpoint {
+				remote-endpoint = <&ws_bridge_out>;
+			};
+		};
+	};
+};
+
+/* panel-simple enables power-supply without a voltage; else L2C idles at 1.62V. */
+&vreg_l2c_1p62 {
+	regulator-min-microvolt = <1800000>;
+	regulator-max-microvolt = <1800000>;
+};
+
+&tlmm {
+	/* Panel reset (61, active low) + backlight enable (39), applied at bridge probe. */
+	disp0_ctrl_state: disp0-ctrl-state {
+		pins = "gpio61", "gpio39";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+
+	/* Unconsumed DISP0 outputs: STBY/PDN(96), START(38). */
+	disp0_misc_state: disp0-misc-state {
+		pins = "gpio96", "gpio38";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	/* Unconsumed DISP0 inputs: ADP_PRESENT(105), RDY/INT(36). */
+	disp0_status_state: disp0-status-state {
+		pins = "gpio105", "gpio36";
+		function = "gpio";
+		bias-pull-up;
+	};
+};
+
 &venus {
 	status = "okay";
+};
+
+/*
+ * No DP alt-mode route out of USB0, and the qmpphy DP aux_bridge would make DP
+ * defer forever, costing the DPU /dev/dri/card0. Sever the of-graph link both ends
+ * (here, not in the camx overlay, since overlays cannot delete base properties).
+ */
+&mdss_dp_out {
+	/delete-property/ remote-endpoint;
+};
+
+&usb_dp_qmpphy_dp_in {
+	/delete-property/ remote-endpoint;
 };
