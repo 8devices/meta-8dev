@@ -1,0 +1,96 @@
+From 1c7e2e1957061de9853c802a32eb694d0832841a Mon Sep 17 00:00:00 2001
+From: Edvinas Stunzenas <edvinas@8devices.com>
+Date: Wed, 26 Aug 2026 21:30:44 +0000
+Subject: [PATCH] set-active: probe a partition that exists when detecting
+ eMMC vs UFS
+
+set_active_boot_slot() decided between the eMMC and the UFS code path by
+resolving a hard-coded "xbl_a":
+
+    ismmc = gpt_utils_is_partition_backed_by_emmc(PTN_XBL AB_SLOT_A_SUFFIX);
+    if (!ismmc && ufs_bsg_dev_open() < 0)
+            goto error;
+
+Not every A/B layout has an xbl pair - the QCS404 boards here do not.
+gpt_utils_is_partition_backed_by_emmc() returns false both for a genuine UFS
+device and for a partition name it cannot resolve, so on an eMMC-only board
+with no xbl_a the probe reported UFS, ufs_bsg_dev_open() failed on the absent
+/dev/bsg/ufs-bsg0, and set-active aborted before touching the GPT:
+
+    # qbootctl -s b
+    Unable to open '/dev/bsg/ufs-bsg0': No such file or directory
+    Is CONFIG_SCSI_UFS_BSG is enabled in your kernel?
+    SLOT _b: Failed to set active
+
+Probe an A/B partition that is actually present instead. AB_PTN_LIST starts
+with xbl, so scanning it in order keeps the upstream probe wherever an xbl
+pair exists and falls back to the first pair that does. When no A/B pair is
+present at all the storage type is genuinely unknown, so fail with a clear
+message rather than guessing UFS and dying in the bsg open.
+
+Signed-off-by: Edvinas Stunzenas <edvinas@8devices.com>
+---
+ bootctrl_impl.cpp | 37 ++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 36 insertions(+), 1 deletion(-)
+
+diff --git a/bootctrl_impl.cpp b/bootctrl_impl.cpp
+index 7c1a082..923445d 100644
+--- a/bootctrl_impl.cpp
++++ b/bootctrl_impl.cpp
+@@ -148,6 +148,32 @@ error:
+ 	return retval;
+ }
+ 
++//Pick an A/B partition that is actually present on this device, to be used as
++//the probe for a storage-type check.
++//
++//gpt_utils_is_partition_backed_by_emmc() reports UFS both for a real UFS
++//device and for a name it cannot resolve, so probing a partition that does not
++//exist silently selects the UFS code path. AB_PTN_LIST starts with xbl, so
++//scanning it in order keeps the upstream choice of probe wherever an xbl pair
++//exists, and falls back to the first pair that does.
++//
++//Returns a pointer to buf on success, NULL when no A/B pair is present.
++static const char *ab_probe_partition(char *buf, size_t buflen)
++{
++	const char ptn_list[][MAX_GPT_NAME_SIZE] = { AB_PTN_LIST };
++	char path[PATH_MAX] = { 0 };
++	struct stat st;
++	uint32_t i;
++
++	for (i = 0; i < ARRAY_SIZE(ptn_list); i++) {
++		snprintf(buf, buflen, "%s%s", ptn_list[i], AB_SLOT_A_SUFFIX);
++		snprintf(path, sizeof(path), "%s/%s", BOOT_DEV_DIR, buf);
++		if (stat(path, &st) == 0)
++			return buf;
++	}
++	return NULL;
++}
++
+ //Set a particular attribute for all the partitions in a
+ //slot
+ static int update_slot_attribute(const char *slot, enum part_attr_type ab_attr)
+@@ -603,13 +629,22 @@ int set_active_boot_slot(unsigned slot)
+ 	int rc = -1;
+ 	map<string, vector<string> >::iterator map_iter;
+ 	bool ismmc;
++	char probe[MAX_GPT_NAME_SIZE + 1] = { 0 };
+ 
+ 	if (boot_control_check_slot_sanity(slot)) {
+ 		fprintf(stderr, "%s: Bad arguments\n", __func__);
+ 		goto error;
+ 	}
+ 
+-	ismmc = gpt_utils_is_partition_backed_by_emmc(PTN_XBL AB_SLOT_A_SUFFIX);
++	//Probe a partition that exists rather than a hard-coded xbl_a: an
++	//unresolvable name is reported as UFS, which sends eMMC-only boards
++	//into ufs_bsg_dev_open() and aborts set-active.
++	if (!ab_probe_partition(probe, sizeof(probe))) {
++		fprintf(stderr, "%s: No A/B partitions found under %s\n",
++			__func__, BOOT_DEV_DIR);
++		goto error;
++	}
++	ismmc = gpt_utils_is_partition_backed_by_emmc(probe);
+ 
+ 	if (!ismmc && ufs_bsg_dev_open() < 0) {
+ 		goto error;
