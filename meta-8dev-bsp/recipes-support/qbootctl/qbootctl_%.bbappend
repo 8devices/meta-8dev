@@ -1,4 +1,5 @@
 FILESEXTRAPATHS:prepend:tobufi := "${THISDIR}/files:"
+FILESEXTRAPATHS:prepend:citron := "${THISDIR}/files:"
 
 SRC_URI:append:tobufi = "\
     file://0001-search-upper-case-marker.patch \
@@ -13,5 +14,3 @@ SRC_URI:append:citron = "\
     file://0003-set-active-probe-a-partition-that-exists-when-detect.patch \
     file://0004-gpt-utils-read-and-write-the-backup-GPT-not-a-second.patch \
 "
-
-FILESEXTRAPATHS:prepend:citron := "${THISDIR}/files:"
