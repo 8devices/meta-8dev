@@ -1,0 +1,226 @@
+From be1a5b1104bace375d13962668ce5876f986a52d Mon Sep 17 00:00:00 2001
+From: Edvinas Stunzenas <edvinas@8devices.com>
+Date: Wed, 26 Aug 2026 21:27:13 +0000
+Subject: [PATCH] gpt-utils: read and write the backup GPT, not a second
+ copy of the primary
+
+gpt_disk_get_disk_info() loaded the backup header with
+
+    disk->hdr_bak = gpt_get_header(dev, PRIMARY_GPT);
+
+so hdr_bak and pentry_arr_bak were a second copy of the *primary* table, and
+gpt_disk_commit() wrote back only the primary header and the primary partition
+array. Every caller here (mark_boot_successful, set_slot_as_unbootable,
+boot_ctl_set_active_slot_for_partitions) carefully updates both the primary and
+the backup entry, and gpt_disk_update_crc() carefully recomputes both CRCs -
+and all of the backup work was then thrown away.
+
+The on-disk effect is that the backup GPT never changes. From the first slot
+attribute update onwards the two tables disagree, which every GPT tool reports
+as a corrupt disk:
+
+    # qbootctl -u a
+    SLOT _a: Set as unbootable
+    # sgdisk --verify /dev/mmcblk0
+    Warning! Main and backup partition tables differ! ...
+    Main partition table: OK
+    Backup partition table: ERROR
+
+On this platform that surfaces during SWUpdate: the postinstall slot-switch
+script runs sgdisk, SWUpdate forwards a child's stderr as ERROR, and a
+successful update reports a screenful of FAILURE notifications. The lasting
+risk is worse than the noise - the backup holds stale slot attributes, so
+recovering the primary from it would restore the wrong boot slot state.
+
+Read the backup header from SECONDARY_GPT and write both the backup array and
+the backup header back in gpt_disk_commit().
+
+Sizes are now taken per table rather than assuming the two headers agree.
+gpt_get_pentry_arr() already sized its read from the header it was handed, but
+pentry_arr_size / pentry_size were read from the primary only and then used to
+walk, CRC and write both arrays. With hdr_bak now genuinely the backup header,
+that assumption would silently CRC the backup over the primary's length, so
+pentry_arr_bak_size / pentry_bak_size are recorded alongside and used wherever
+the backup is touched. The header CRC likewise uses each header's own size.
+
+Also fix the ATTR_SLOT_ACTIVE case in update_slot_attribute(), which set the
+backup entry from the primary entry's value:
+
+    *attr_bak = (*attr) | AB_PARTITION_ATTR_SLOT_ACTIVE;
+
+Harmless while the backup was never written; wrong now that it is.
+
+Note the commit order: the primary is written first, then the backup. A power
+loss mid-commit therefore leaves the primary updated and the backup stale,
+which is the same state this fix eliminates in the steady case, and is what
+the pre-existing code left behind unconditionally.
+
+Signed-off-by: Edvinas Stunzenas <edvinas@8devices.com>
+---
+ bootctrl_impl.cpp |  2 +-
+ gpt-utils.cpp     | 59 +++++++++++++++++++++++++++++++++++++++--------
+ gpt-utils.h       |  4 ++++
+ 3 files changed, 54 insertions(+), 11 deletions(-)
+
+diff --git a/bootctrl_impl.cpp b/bootctrl_impl.cpp
+index 923445d..9218e2a 100644
+--- a/bootctrl_impl.cpp
++++ b/bootctrl_impl.cpp
+@@ -262,7 +262,7 @@ static int update_slot_attribute(const char *slot, enum part_attr_type ab_attr)
+ 			break;
+ 		case ATTR_SLOT_ACTIVE:
+ 			*attr = (*attr) | AB_PARTITION_ATTR_SLOT_ACTIVE;
+-			*attr_bak = (*attr) | AB_PARTITION_ATTR_SLOT_ACTIVE;
++			*attr_bak = (*attr_bak) | AB_PARTITION_ATTR_SLOT_ACTIVE;
+ 			break;
+ 		default:
+ 			fprintf(stderr, "%s: Unrecognized attr\n", __func__);
+diff --git a/gpt-utils.cpp b/gpt-utils.cpp
+index b913d42..97e15de 100644
+--- a/gpt-utils.cpp
++++ b/gpt-utils.cpp
+@@ -625,6 +625,7 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *dsk)
+ 	struct gpt_disk *disk = NULL;
+ 	int fd = -1;
+ 	uint32_t gpt_header_size = 0;
++	uint32_t gpt_bak_header_size = 0;
+ 
+ 	if (!dsk || !dev) {
+ 		fprintf(stderr, "%s: Invalid arguments\n", __func__);
+@@ -639,12 +640,16 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *dsk)
+ 	gpt_header_size = GET_4_BYTES(disk->hdr + HEADER_SIZE_OFFSET);
+ 	// FIXME: pointer offsets crc bleh
+ 	disk->hdr_crc = crc32(0, disk->hdr, gpt_header_size);
+-	disk->hdr_bak = gpt_get_header(dev, PRIMARY_GPT);
++	disk->hdr_bak = gpt_get_header(dev, SECONDARY_GPT);
+ 	if (!disk->hdr_bak) {
+ 		fprintf(stderr, "%s: Failed to get backup header\n", __func__);
+ 		goto error;
+ 	}
+-	disk->hdr_bak_crc = crc32(0, disk->hdr_bak, gpt_header_size);
++	//The backup header describes its own layout: header size, entry size,
++	//entry count and entry location are all read from it rather than
++	//assumed to match the primary.
++	gpt_bak_header_size = GET_4_BYTES(disk->hdr_bak + HEADER_SIZE_OFFSET);
++	disk->hdr_bak_crc = crc32(0, disk->hdr_bak, gpt_bak_header_size);
+ 
+ 	//Descriptor for the block device. We will use this for further
+ 	//modifications to the partition table
+@@ -677,6 +682,10 @@ int gpt_disk_get_disk_info(const char *dev, struct gpt_disk *dsk)
+ 	disk->pentry_arr_size =
+ 		GET_4_BYTES(disk->hdr + PARTITION_COUNT_OFFSET) *
+ 		disk->pentry_size;
++	disk->pentry_bak_size = GET_4_BYTES(disk->hdr_bak + PENTRY_SIZE_OFFSET);
++	disk->pentry_arr_bak_size =
++		GET_4_BYTES(disk->hdr_bak + PARTITION_COUNT_OFFSET) *
++		disk->pentry_bak_size;
+ 	disk->pentry_arr_crc = GET_4_BYTES(disk->hdr + PARTITION_CRC_OFFSET);
+ 	disk->pentry_arr_bak_crc =
+ 		GET_4_BYTES(disk->hdr_bak + PARTITION_CRC_OFFSET);
+@@ -695,15 +704,26 @@ uint8_t *gpt_disk_get_pentry(struct gpt_disk *disk, const char *partname,
+ 			     enum gpt_instance instance)
+ {
+ 	uint8_t *ptn_arr = NULL;
++	uint32_t arr_size = 0;
++	uint32_t ent_size = 0;
+ 	if (!disk || !partname || disk->is_initialized != GPT_DISK_INIT_MAGIC) {
+ 		fprintf(stderr, "%s: Invalid argument\n", __func__);
+ 		goto error;
+ 	}
+-	ptn_arr = (instance == PRIMARY_GPT) ? disk->pentry_arr :
+-						    disk->pentry_arr_bak;
+-	return (gpt_pentry_seek(partname, ptn_arr,
+-				ptn_arr + disk->pentry_arr_size,
+-				disk->pentry_size));
++	//Each table is walked using the geometry from its own header; the
++	//primary and the backup are not required to agree on entry count or
++	//entry size.
++	if (instance == PRIMARY_GPT) {
++		ptn_arr = disk->pentry_arr;
++		arr_size = disk->pentry_arr_size;
++		ent_size = disk->pentry_size;
++	} else {
++		ptn_arr = disk->pentry_arr_bak;
++		arr_size = disk->pentry_arr_bak_size;
++		ent_size = disk->pentry_bak_size;
++	}
++	return (gpt_pentry_seek(partname, ptn_arr, ptn_arr + arr_size,
++				ent_size));
+ error:
+ 	return NULL;
+ }
+@@ -715,6 +735,7 @@ error:
+ int gpt_disk_update_crc(struct gpt_disk *disk)
+ {
+ 	uint32_t gpt_header_size = 0;
++	uint32_t gpt_bak_header_size = 0;
+ 	if (!disk || (disk->is_initialized != GPT_DISK_INIT_MAGIC)) {
+ 		fprintf(stderr, "%s: invalid argument\n", __func__);
+ 		goto error;
+@@ -722,9 +743,10 @@ int gpt_disk_update_crc(struct gpt_disk *disk)
+ 	//Recalculate the CRC of the primary partiton array
+ 	disk->pentry_arr_crc =
+ 		crc32(0, disk->pentry_arr, disk->pentry_arr_size);
+-	//Recalculate the CRC of the backup partition array
++	//Recalculate the CRC of the backup partition array, over the backup
++	//array's own length rather than the primary's
+ 	disk->pentry_arr_bak_crc =
+-		crc32(0, disk->pentry_arr_bak, disk->pentry_arr_size);
++		crc32(0, disk->pentry_arr_bak, disk->pentry_arr_bak_size);
+ 	//Update the partition CRC value in the primary GPT header
+ 	PUT_4_BYTES(disk->hdr + PARTITION_CRC_OFFSET, disk->pentry_arr_crc);
+ 	//Update the partition CRC value in the backup GPT header
+@@ -732,11 +754,12 @@ int gpt_disk_update_crc(struct gpt_disk *disk)
+ 		    disk->pentry_arr_bak_crc);
+ 	//Update the CRC value of the primary header
+ 	gpt_header_size = GET_4_BYTES(disk->hdr + HEADER_SIZE_OFFSET);
++	gpt_bak_header_size = GET_4_BYTES(disk->hdr_bak + HEADER_SIZE_OFFSET);
+ 	//Header CRC is calculated with its own CRC field set to 0
+ 	PUT_4_BYTES(disk->hdr + HEADER_CRC_OFFSET, 0);
+ 	PUT_4_BYTES(disk->hdr_bak + HEADER_CRC_OFFSET, 0);
+ 	disk->hdr_crc = crc32(0, disk->hdr, gpt_header_size);
+-	disk->hdr_bak_crc = crc32(0, disk->hdr_bak, gpt_header_size);
++	disk->hdr_bak_crc = crc32(0, disk->hdr_bak, gpt_bak_header_size);
+ 	PUT_4_BYTES(disk->hdr + HEADER_CRC_OFFSET, disk->hdr_crc);
+ 	PUT_4_BYTES(disk->hdr_bak + HEADER_CRC_OFFSET, disk->hdr_bak_crc);
+ 	return 0;
+@@ -773,6 +796,22 @@ int gpt_disk_commit(struct gpt_disk *disk)
+ 			__func__);
+ 		goto error;
+ 	}
++	//The backup table must be written too. Leaving it behind makes the two
++	//tables disagree from the first attribute change onwards, which every
++	//GPT tool then reports as a corrupt disk, and leaves the backup holding
++	//stale slot attributes that a recovery would restore.
++	LOGD("%s: Writing back backup partition array\n", __func__);
++	if (gpt_set_pentry_arr(disk->hdr_bak, fd, disk->pentry_arr_bak)) {
++		fprintf(stderr, "%s: Failed to write backup GPT partition arr\n",
++			__func__);
++		goto error;
++	}
++	LOGD("%s: Writing back backup GPT header\n", __func__);
++	if (gpt_set_header(disk->hdr_bak, fd, SECONDARY_GPT) != 0) {
++		fprintf(stderr, "%s: Failed to update backup GPT header\n",
++			__func__);
++		goto error;
++	}
+ 	fsync(fd);
+ 	close(fd);
+ 	return 0;
+diff --git a/gpt-utils.h b/gpt-utils.h
+index 319f3fe..dc09194 100644
+--- a/gpt-utils.h
++++ b/gpt-utils.h
+@@ -107,8 +107,12 @@ struct gpt_disk {
+ 	uint8_t *pentry_arr_bak;
+ 	//Size of the pentry array
+ 	uint32_t pentry_arr_size;
++	//Size of the backup pentry array
++	uint32_t pentry_arr_bak_size;
+ 	//Size of each element in the pentry array
+ 	uint32_t pentry_size;
++	//Size of each element in the backup pentry array
++	uint32_t pentry_bak_size;
+ 	//CRC of the partition entry array
+ 	uint32_t pentry_arr_crc;
+ 	//CRC of the backup partition entry array
