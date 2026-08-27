@@ -11,7 +11,7 @@ SRC_URI:append:tobufi = "\
     file://radio-rename.rules \
 "
 
-SRC_URI:append:robovision = "\
+SRC_URI:append:citron = "\
     file://radios.cfg \
     file://radio-rename.rules \
 "
@@ -34,7 +34,7 @@ do_install:append:tobufi() {
     install -m 0644 ${WORKDIR}/radio-rename.rules ${D}${base_libdir}/udev/rules.d/
 }
 
-do_install:append:robovision() {
+do_install:append:citron() {
     install -d ${D}${base_libdir}/udev/rules.d/
     install -m 0644 ${WORKDIR}/radio-rename.rules ${D}${base_libdir}/udev/rules.d/
 }
@@ -48,7 +48,7 @@ FILES:${PN}:append:tobufi = "\
    ${base_libdir}/udev/ \
 "
 
-FILES:${PN}:append:robovision = "\
+FILES:${PN}:append:citron = "\
    ${base_libdir}/udev/ \
 "
 

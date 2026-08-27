@@ -1,10 +1,9 @@
-# 'qcom' outranks 'citron'/'robovision' in OVERRIDES, so a :citron value
+# 'qcom' outranks 'citron' in OVERRIDES, so a :citron value
 # would be overwritten by meta-qcom's COMPATIBLE_MACHINE:qcom. We parse after it
 # (priority 6 vs 5), so re-set the :qcom value itself.
-COMPATIBLE_MACHINE:qcom = "^(citron|robovision)$"
+COMPATIBLE_MACHINE:qcom = "citron"
 KBRANCH:citron ?= "v6.18/standard/base"
 KMACHINE:citron ?= "citron"
-KMACHINE:robovision ?= "robovision"
 
 # Citron default features
 KERNEL_FEATURES:append:citron = "\
@@ -13,8 +12,8 @@ KERNEL_FEATURES:append:citron = "\
     cfg/8dev/systemd.scc \
     cfg/8dev/squashfs.scc \
     cfg/8dev/uvc-camera.scc \
-    cfg/8dev/qcs6490-camera.scc \
-    cfg/8dev/qcs6490-venus.scc \
+    cfg/8dev/camera.scc \
+    cfg/8dev/venus.scc \
 "
 
 # Prevent upstream features/netfilter/netfilter.scc from being included

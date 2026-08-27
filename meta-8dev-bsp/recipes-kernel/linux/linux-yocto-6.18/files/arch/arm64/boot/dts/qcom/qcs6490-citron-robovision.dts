@@ -3,21 +3,71 @@
 /dts-v1/;
 
 #include "qcs6490-citron.dtsi"
+#include <dt-bindings/leds/common.h>
 
 / {
-	model = "8Devices Robonode Vision";
+	model = "8devices Robonode Vision";
 	compatible = "8devices,robovision", "8devices,citron",
 		"qcom,qcm6490";
 
-	/*
-	 * Read by the Qualcomm bootloader DTB selector (not Linux) to pick this
-	 * DTB for the running hardware. msm-id = <soc-id soc-rev>: the Kodiak SoC
-	 * family (475 SM, 497 QCM, 498 QCS, 515 SM-LTE) 6490, rev >= 1.0.
-	 * board-id = <0x00PMPmPH subtype>: hw-platform 0x20, version 1.1, subtype 2.
-	 * Must match what the CDT (citron_cdt.bin) reports or the DTB is skipped.
-	 */
 	qcom,msm-id = <497 0x10000>, <498 0x10000>, <475 0x10000>, <515 0x10000>;
-	qcom,board-id = <0x010120 2>;
+
+	/*
+	 * Cell 0 is <unused:8 major:8 minor:8 platform_type:8>, cell 1 is
+	 * <ddr_class:3 subtype:8> at bits 10:8 and 7:0. The subtype lives in
+	 * cell 1 only; the legacy form that packed it into cell 0's top byte
+	 * is not used here.
+	 *
+	 * The DDR class is not optional. UEFI's DTB selector compares it for
+	 * equality alongside chip-id, platform and subtype, and this SoM reports
+	 * class 6, so cell 1 must be 0x6xx. Leaving it out makes every DTB in
+	 * combined-dtb.dtb fail to match; UEFI then falls back to its built-in
+	 * RB3gen2 tree, which has no eMMC node, and the rootfs never appears.
+	 * Boards that ship different DRAM need a different value here.
+	 *
+	 * Values must agree with the CDT flashed by edl_flash.py -b.
+	 */
+	qcom,board-id = <0x00010020 0x642>;
+
+	/*
+	 * RGB status LED, 3 gpio-leds channels. Common-anode LED (Wurth 155124M173200)
+	 * with cathodes low-side switched by DMG1012T N-FETs, so channels are active-HIGH.
+	 */
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&rgb_led_state>;
+
+		led-red {
+			gpios = <&tlmm 117 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_RED>;
+			function = LED_FUNCTION_INDICATOR;
+			default-state = "off";
+		};
+
+		led-green {
+			gpios = <&tlmm 84 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_INDICATOR;
+			default-state = "off";
+		};
+
+		led-blue {
+			gpios = <&tlmm 125 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_BLUE>;
+			function = LED_FUNCTION_INDICATOR;
+			default-state = "off";
+		};
+	};
+};
+
+&tlmm {
+	rgb_led_state: rgb-led-state {
+		pins = "gpio117", "gpio84", "gpio125";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
 };
 
 /*
@@ -132,10 +182,12 @@
 	clock-frequency = <400000>;
 	status = "okay";
 
+	/* Main array @0x50; powered from +1V8_VREG_L8C; WC=gpio46 write-protects (at24 wp-gpios). */
 	eeprom@50 {
 		compatible = "atmel,24c256";
 		reg = <0x50>;
 		pagesize = <64>;
+		vcc-supply = <&vreg_l8c_1p62>;
 		wp-gpios = <&tlmm 46 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&eeprom_wc_state>;
@@ -492,6 +544,168 @@
 	status = "okay";
 };
 
+/*
+ * DISP0 (MIPI-DSI0) -> Waveshare 23448, an 8" 1280x800 IPS DSI panel ("8inch DSI
+ * LCD (C)", the Raspberry Pi form factor). Connector pins: SDA/SCL=gpio56/57 (i2c14)
+ * RST=61 BL_EN=39 STBY/PDN=96 START=38 ADP_PRESENT=105 RDY/INT=36 BL_PWM=pm8350c
+ * gpio8; interface supply +1V8_VREG_L18B=vreg_l18b_1p8.
+ *
+ * The panel ships with an adapter board that is a DSI-to-DPI bridge on the
+ * connector's I2C bus. It sequences the panel and dims the backlight over I2C
+ * registers, so none of the DISP0 control pins are needed to drive the panel: only
+ * RST (active low) and BL_EN are held de-asserted/on, for adapters that pass them
+ * through, and the rest stay documented-but-unconsumed pin states.
+ *
+ * The panel runs on two of the four DSI0 data lanes.
+ */
+&dispcc {
+	status = "okay";
+};
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi {
+	vdda-supply = <&vreg_l6b_1p2>;
+	status = "okay";
+};
+
+&mdss_dsi_phy {
+	vdds-supply = <&vreg_l10c_0p88>;
+	status = "okay";
+};
+
+&mdss_dsi0_out {
+	remote-endpoint = <&ws_bridge_in>;
+	data-lanes = <0 1>;
+};
+
+&i2c14 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/*
+	 * power-supply is the connector's +1V8 interface rail: the panel's own +5V is
+	 * unswitched on the carrier, and the driver never touches the supply, but the
+	 * binding requires one.
+	 */
+	bridge@45 {
+		compatible = "waveshare,dsi2dpi";
+		reg = <0x45>;
+		power-supply = <&vreg_l18b_1p8>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&disp0_ctrl_state>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				ws_bridge_in: endpoint {
+					data-lanes = <1 2>;
+					remote-endpoint = <&mdss_dsi0_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				ws_bridge_out: endpoint {
+					remote-endpoint = <&ws_panel_in>;
+				};
+			};
+		};
+	};
+};
+
+/ {
+	/*
+	 * Dumb DPI panel behind the bridge. Timings are the vendor's 1280x800 60 Hz
+	 * mode (shared by their 8" and 10.1" panels): 83.333 MHz pixel clock,
+	 * h 1280 +156 +20 +40, v 800 +40 +48 +40.
+	 */
+	panel {
+		compatible = "waveshare,23448", "panel-dpi";
+		power-supply = <&vreg_l18b_1p8>;
+		width-mm = <171>;
+		height-mm = <107>;
+
+		panel-timing {
+			clock-frequency = <83333000>;
+			hactive = <1280>;
+			hfront-porch = <156>;
+			hsync-len = <20>;
+			hback-porch = <40>;
+			vactive = <800>;
+			vfront-porch = <40>;
+			vsync-len = <48>;
+			vback-porch = <40>;
+			hsync-active = <0>;
+			vsync-active = <0>;
+			de-active = <1>;
+			pixelclk-active = <1>;
+		};
+
+		port {
+			ws_panel_in: endpoint {
+				remote-endpoint = <&ws_bridge_out>;
+			};
+		};
+	};
+};
+
+&tlmm {
+	/* DISP0 panel reset (61, active low) + backlight enable (39), applied at bridge probe. */
+	disp0_ctrl_state: disp0-ctrl-state {
+		pins = "gpio61", "gpio39";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+
+	/* DISP0 outputs this panel does not use: STBY/PDN(96), START(38). */
+	disp0_misc_state: disp0-misc-state {
+		pins = "gpio96", "gpio38";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	/* DISP0 status inputs: ADP_PRESENT(105), RDY/INT(36). */
+	disp0_status_state: disp0-status-state {
+		pins = "gpio105", "gpio36";
+		function = "gpio";
+		bias-pull-up;
+	};
+
+	/* RGB status LED channels: RED(117), GREEN(84), BLUE(125). */
+	rgb_led_state: rgb-led-state {
+		pins = "gpio117", "gpio84", "gpio125";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+};
+
 &venus {
 	status = "okay";
+};
+
+/*
+ * Sever the DP<->qmpphy of-graph link on both ends so a DP lookup returns a clean
+ * -ENODEV: there is no Type-C connector here, and the qmpphy DP aux_bridge would
+ * otherwise make DP defer forever, leaving the DPU without /dev/dri/card0. DP itself
+ * is only enabled by the camx overlay, so this is inert otherwise. It lives here
+ * rather than in the overlay because overlays cannot delete base tree properties.
+ */
+&mdss_dp_out {
+	/delete-property/ remote-endpoint;
+};
+
+&usb_dp_qmpphy_dp_in {
+	/delete-property/ remote-endpoint;
 };

@@ -3,7 +3,7 @@ From: Justinas Grauslis <justinas@8devices.com>
 Date: Tue, 16 Jun 2026 17:00:00 +0300
 Subject: [PATCH] citron: support attribute-based A/B slot scheme
 
-The Citron / robovision board does not use the Android A/B layout that
+The Citron board does not use the Android A/B layout that
 qbootctl was written for. It boots from the ESP (no boot_a/boot_b image), has
 no androidboot 'slot_suffix' on the kernel cmdline, and only the dtb, efi and
 system partition pairs carry the GPT slot-select attribute. eMMC is mmcblk1,

@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+/*
+ * 8devices Citron DVK Rev 2.0 - the rev 1.0 carrier with no described hardware
+ * deltas yet, so it inherits the full description and only re-identifies itself.
+ */
+
+/dts-v1/;
+
+#include "qcs6490-citron-dvk.dts"
+
+/ {
+	model = "8devices Citron DVK Rev 2.0";
+
+	compatible = "8devices,citron-dvk-rev2",
+		"8devices,citron-dvk",
+		"8devices,citron",
+		"qcom,qcm6490";
+
+	/* citron-dvk_2.0 CDT: subtype 0x41, version 2.0, DDR class 6. */
+	qcom,board-id = <0x00020020 0x641>;
+};

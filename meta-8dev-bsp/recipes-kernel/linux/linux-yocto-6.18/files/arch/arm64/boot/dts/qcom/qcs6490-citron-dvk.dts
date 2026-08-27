@@ -1,0 +1,948 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+/*
+ * 8devices Citron DVK - development carrier for the Citron SOM. Same SOM as
+ * Robonode Vision; vs qcs6490-citron-robovision.dts: dual-role USB0/USB1, microSD
+ * on SDC2, on-carrier UFS + SPI NAND, PCIe1 to an M.2 A+E socket, PMIC power key
+ * instead of the RGB LED, and four of the five CSI ports populated.
+ *
+ * Self-contained: qcs6490-citron-dvk-rev2.dts includes this file, the way
+ * robovision-rev2 includes robovision. Cameras are described inline - this branch
+ * builds one DTB per board with no overlays, so there is no CAMERA_STACK dtso.
+ */
+
+/dts-v1/;
+
+#include "qcs6490-citron.dtsi"
+#include <dt-bindings/clock/qcom,camcc-sc7280.h>
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+	model = "8devices Citron DVK";
+	compatible = "8devices,citron-dvk", "8devices,citron",
+		"qcom,qcm6490";
+
+	qcom,msm-id = <497 0x10000>, <498 0x10000>, <475 0x10000>, <515 0x10000>;
+	/*
+	 * Cell 0 is <unused:8 major:8 minor:8 platform_type:8>, cell 1 is
+	 * <ddr_class:3 subtype:8> at bits 10:8 and 7:0. See
+	 * qcs6490-citron-robovision.dts for why the DDR class is mandatory.
+	 * Must agree with the citron-dvk_1.0 CDT flashed by edl_flash.py -b.
+	 */
+	qcom,board-id = <0x00010020 0x641>;
+};
+
+/*
+ * Dual-role Type-C on both ports: USB0 = usb_1 (J24, SS+HS), USB1 = usb_2 (J31, HS
+ * only). A PI5USB30213A per port detects the cable, switches +5V itself and reports
+ * the role on GPIO52 (USB0) / GPIO53 (USB1): driven LOW = host, released = device.
+ * The SoC never drives VBUS, hence no VBUS regulators here. All four combinations
+ * verified on hardware: gadget at SS on USB0 and HS on USB1, host on both.
+ *
+ * BOARD ERRATUM: both CC chips' ID outputs land on one node - U36-9 and U37-9 sit on
+ * both QCS_GPIO_52 and QCS_GPIO_53, which also gate Q4/Q5 - so the pins always read
+ * alike. Driving either low pulls the other low with the connectors unbound, i.e. it
+ * is wiring, not software: a device on either port puts both in host mode and tears
+ * down the other port's gadget, so the ports cannot hold opposite roles.
+ */
+&usb_1 {
+	dr_mode = "otg";
+	usb-role-switch;
+};
+
+&usb_1_dwc3_hs {
+	remote-endpoint = <&usb0_conn_ep>;
+};
+
+/*
+ * Both SS lane pairs reach the flippable receptacle, but nothing reports cable
+ * orientation to the SoC, so drop orientation-switch: SS works in one orientation,
+ * HS in the other.
+ */
+&usb_1_qmpphy {
+	/delete-property/ orientation-switch;
+};
+
+/* Keep the stock usb-role-switch, repointed from the disabled EUD to USB1. */
+&usb_2 {
+	dr_mode = "otg";
+	status = "okay";
+};
+
+&usb2_role_switch {
+	remote-endpoint = <&usb1_conn_ep>;
+};
+
+&eud_ep {
+	/delete-property/ remote-endpoint;
+};
+
+&usb_2_hsphy {
+	vdda-pll-supply = <&vreg_l10c_0p88>;
+	vdda18-supply = <&vreg_l1c_1p8>;
+	vdda33-supply = <&vreg_l2b_3p072>;
+	status = "okay";
+};
+
+&tlmm {
+	/*
+	 * No bias: the pins rely on an external pull on the ID nets. Measured on the
+	 * board, an internal pull-up was what made "released" read high, and with the
+	 * bias off both pins read low in every plug state, which leaves both ports in
+	 * host mode and no gadget. Revisit if the nets gain a pull-up.
+	 */
+	usb0_id_state: usb0-id-state {
+		pins = "gpio52";
+		function = "gpio";
+		bias-disable;
+	};
+
+	usb1_id_state: usb1-id-state {
+		pins = "gpio53";
+		function = "gpio";
+		bias-disable;
+	};
+};
+
+/ {
+	/* usb-conn-gpio picks HOST on logical 0, matching the CC chip's low-for-host. */
+	usb0_connector: connector-usb0 {
+		compatible = "gpio-usb-b-connector", "usb-b-connector";
+		label = "USB0";
+		id-gpios = <&tlmm 52 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb0_id_state>;
+
+		port {
+			usb0_conn_ep: endpoint {
+				remote-endpoint = <&usb_1_dwc3_hs>;
+			};
+		};
+	};
+
+	usb1_connector: connector-usb1 {
+		compatible = "gpio-usb-b-connector", "usb-b-connector";
+		label = "USB1";
+		id-gpios = <&tlmm 53 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb1_id_state>;
+
+		port {
+			usb1_conn_ep: endpoint {
+				remote-endpoint = <&usb2_role_switch>;
+			};
+		};
+	};
+};
+
+/*
+ * QUP1 hosts i2c11 + uart10/uart12. firmware-name is required: GENI loads per-SE
+ * firmware from here for any SE the bootloader left unprogrammed, else -EINVAL.
+ */
+&qupv3_id_1 {
+	firmware-name = "qcom/qcs6490/qupv3fw.elf";
+	status = "okay";
+};
+
+&i2c11 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/* M24256E-FMC6TG; the "-F" lockable page at 0x58 is not instantiated. */
+	eeprom@50 {
+		compatible = "atmel,24c256";
+		reg = <0x50>;
+		pagesize = <64>;
+		vcc-supply = <&vreg_l8c_1p62>;
+		wp-gpios = <&tlmm 46 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&eeprom_wc_state>;
+	};
+};
+
+&tlmm {
+	eeprom_wc_state: eeprom-wc-state {
+		pins = "gpio46";
+		function = "gpio";
+		bias-disable;
+	};
+};
+
+/*
+ * Five extra 4-wire GENI UARTs (CTS/RFR/TX/RX); console is uart5 via the on-carrier
+ * CY7C65213 bridge. uart1 gpio4-7 J27, uart3 gpio12-15 J26, uart4 gpio16-19 J29,
+ * uart10 gpio40-43 J30, uart12 gpio48-51 J28.
+ */
+&uart1 {
+	status = "okay";
+};
+
+&uart3 {
+	status = "okay";
+};
+
+&uart4 {
+	status = "okay";
+};
+
+&uart10 {
+	status = "okay";
+};
+
+/* gpio48-51 REQUIRE the matching XBL/TZ release, else gpiochip bringup hangs. */
+&uart12 {
+	status = "okay";
+};
+
+/*
+ * microSD slot (J4). vqmmc is +1V8_VREG_L18B, fixed 1.8V rather than a wide-range
+ * LDO, so the mmc core never runs the CMD11 voltage switch and the card stays at SD
+ * high-speed: 50 MHz x 4-bit, ~25 MB/s ceiling, no UHS-I. Verified on hardware.
+ */
+&sdhc_2 {
+	pinctrl-0 = <&sdc2_clk>, <&sdc2_cmd>, <&sdc2_data>, <&sd_cd_state>;
+	pinctrl-1 = <&sdc2_clk_sleep>, <&sdc2_cmd_sleep>, <&sdc2_data_sleep>, <&sd_cd_state>;
+	pinctrl-names = "default", "sleep";
+
+	vmmc-supply = <&vreg_l9c_2p96>;
+	vqmmc-supply = <&vreg_l18b_1p8>;
+	cd-gpios = <&tlmm 91 GPIO_ACTIVE_LOW>;
+
+	status = "okay";
+};
+
+/*
+ * L18B also feeds the SPI NAND and PCIe 1.8V logic, neither of which can claim a
+ * supply in DT; the mmc core drops vqmmc with no card, so hold the rail on.
+ */
+&vreg_l18b_1p8 {
+	regulator-always-on;
+};
+
+&tlmm {
+	sd_cd_state: sd-cd-state {
+		pins = "gpio91";
+		function = "gpio";
+		bias-pull-up;
+	};
+};
+
+/*
+ * On-carrier UFS (U16, Kioxia THGJFJT0E25BAIP); gpio 175 is the TLMM's dedicated
+ * UFS_RESET pin. VCC is L7B (net VREG_L7B_2P50), left at the SOM's 2.952V since it
+ * also feeds the eMMC. VCCQ/VCCQ2 are unnamed on the carrier, so they follow
+ * mainline sc7280; ufshcd only ever sets regulator load, never voltage.
+ */
+&ufs_mem_hc {
+	reset-gpios = <&tlmm 175 GPIO_ACTIVE_LOW>;
+
+	vcc-supply = <&vreg_l7b_2p952>;
+	vcc-max-microamp = <800000>;
+	vccq-supply = <&vreg_l9b_1p2>;
+	vccq-max-microamp = <900000>;
+	vccq2-supply = <&vreg_l9b_1p2>;
+	vccq2-max-microamp = <900000>;
+
+	/* ICE is disabled on this platform (see &ice in the SOM dtsi). */
+	/delete-property/ qcom,ice;
+
+	status = "okay";
+};
+
+&ufs_mem_phy {
+	vdda-phy-supply = <&vreg_l10c_0p88>;
+	vdda-pll-supply = <&vreg_l6b_1p2>;
+	status = "okay";
+};
+
+/*
+ * SPI NAND (U19, 128 MB, 1.8 V off L18B): CS#=166 SO=164 WP#=158 SI=163 SCLK=165
+ * HOLD#=157. COMMENTED OUT for now - it costs ~5 minutes of boot time.
+ *
+ * These pads offer two TLMM functions, gpio and egpio. egpio just releases the pad to
+ * LPASS, where TLMM 144-174 appear as LPI_GPIO 0-30 (QCS6490 doc: GPIO_163 = LPI_GPIO_19,
+ * LPI_QUP0 SE2 lane 0), so the flash lands on LPI 13/14/19-22. Still unreachable:
+ * lpass_tlmm describes only LPI 0-14, no LPI QUP controller driver exists for any SoC,
+ * and the LPI block is ADSP-clocked while citron.dtsi disables remoteproc_adsp. So the
+ * bus has to be bit-banged, ~42 KiB/s. Any
+ * block-layer probe of it then takes ~74 s, which blocks a udev worker and delays
+ * module coldplug past the deferred-probe window - that is what produced the -110
+ * probe failures on USB, adreno_smmu, cci and cpufreq.
+ *
+ * Re-enable once the flash reaches a real controller or the part is dropped. The SoC's
+ * QSPI controller (spi@88dc000) is wired to GPIO12-19, which this board leaves on
+ * headers J26/J29, so a respin can move U19 there and drive it quad-lane.
+ */
+/*
+&tlmm {
+	spi_nand_state: spi-nand-state {
+		bus-pins {
+			pins = "gpio163", "gpio164", "gpio165", "gpio166";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		hold-pins {
+			pins = "gpio157", "gpio158";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+			output-high;
+		};
+	};
+};
+
+/ {
+	spi_nand_bus: spi {
+		compatible = "spi-gpio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		sck-gpios = <&tlmm 165 GPIO_ACTIVE_HIGH>;
+		mosi-gpios = <&tlmm 163 GPIO_ACTIVE_HIGH>;
+		miso-gpios = <&tlmm 164 GPIO_ACTIVE_HIGH>;
+		cs-gpios = <&tlmm 166 GPIO_ACTIVE_LOW>;
+		num-chipselects = <1>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&spi_nand_state>;
+
+		flash@0 {
+			compatible = "spi-nand";
+			reg = <0>;
+			spi-max-frequency = <20000000>;
+		};
+	};
+};
+*/
+
+/* PHONE_ON button on the PMK8350 KPD_PWR_N input -> KEY_POWER. */
+&pon_pwrkey {
+	status = "okay";
+};
+
+/*
+ * PCIe1 (x2) -> M.2 A+E socket (J14): GPIO81 PERST0#, GPIO79 CLKREQ0#, GPIO80
+ * PEWAKE0#, GPIO0 W_DISABLE1#. Internal refclk and hardware-sequenced rails, so no
+ * regulator/clock/endpoint node. Only PERST is driven by the driver; W_DISABLE1# is
+ * held high (radio enabled) via pinctrl-0, applied before PERST is released.
+ * wake-gpios is inert - no host-mode PCIe driver reads it and the binding
+ * deprecates it - so the pull-up on gpio80 is what matters, not its ACTIVE_HIGH.
+ */
+&tlmm {
+	pcie1_reset_n: pcie1-reset-n-state {
+		pins = "gpio81";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-disable;
+	};
+
+	pcie1_wake_n: pcie1-wake-n-state {
+		pins = "gpio80";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	pcie1_wlan_en: pcie1-wlan-en-state {
+		pins = "gpio0";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+};
+
+&pcie1 {
+	perst-gpios = <&tlmm 81 GPIO_ACTIVE_LOW>;
+	wake-gpios = <&tlmm 80 GPIO_ACTIVE_HIGH>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pcie1_reset_n>, <&pcie1_wake_n>, <&pcie1_clkreq_n>,
+		    <&pcie1_wlan_en>;
+	status = "okay";
+};
+
+/*
+ * PCIe0 (x1) -> PI7C9X2G304EV switch -> 2x RTL8111K (r8169 auto-enumerates both).
+ * Only the upstream signals the SoC drives are wired: PERST gpio86, CLKREQ gpio88.
+ * WAKE is not: the downstream WAKE# nets are per-NIC PME, not the link wake.
+ */
+&tlmm {
+	pcie0_reset_n: pcie0-reset-n-state {
+		pins = "gpio86";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-disable;
+	};
+};
+
+&pcie0 {
+	perst-gpios = <&tlmm 86 GPIO_ACTIVE_LOW>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pcie0_reset_n>, <&pcie0_clkreq_n>;
+
+	/*
+	 * The stock map assumes one endpoint, so the NICs behind the switch fall back
+	 * to SID 0x1c00 with no domain -> arm-smmu TF faults; per-device 0x1c02 instead
+	 * makes qcom_smmu_write_s2cr() take a sync external abort. The switch has no
+	 * ACS so all pcie0 devices share one iommu group anyway: collapse every RID
+	 * onto the known-good 0x1c00. Confirmed on hardware. (An unrelated pre-existing
+	 * AER RxErr/UnsupReq storm remains.)
+	 */
+	iommu-map = <0x0 &apps_smmu 0x1c00 0x1>;
+	iommu-map-mask = <0x0>;
+
+	status = "okay";
+};
+
+/*
+ * Cameras, mainline CAMSS + libcamera. All five CSI ports are broken out on
+ * identical 4-lane connectors; control pins follow a fixed pinout (2 ADP_PRESENT,
+ * 3 START, 8/9 I2C, 11 MCLK, 12 STBY/PDN, 14-27 MIPI, 29 STROBE, 30 FSIN,
+ * 31 RDY/INT, 32 RST) resolving to:
+ *
+ *   port conn  MCLK  I2C bus            RST STBY START FSIN STROBE RDY ADP
+ *   CSI0 J20   64    cci0_i2c0 (69/70)  113 112  109   104  116    111 101
+ *   CSI1 J21   65    cci0_i2c1 (71/72)   11  27   25     9    8     24  26
+ *   CSI2 J22   66    cci1_i2c0 (73/74)   77  85  129   115  121    123 127
+ *   CSI3 J23   67    cci1_i2c1 (75/76)   28  29    1    31    2     30   3
+ *   CSI4 J25   68    i2c-gpio (161/162)  59  10   55    58   37     47  54
+ *
+ * CSI3 is unpopulated, so four sensors are described: IMX577 on CSI0/CSI2/CSI4
+ * (imx412 driver, "sony,imx577" shared match) and OV9282 on CSI1. GPIO161/162 have
+ * no CCI or QUP function, so CSI4's sensor I2C is bit-banged. The CAM0/1/3_RESET_N
+ * SOM pads (gpio20/21/78) are unconnected here.
+ */
+
+/* Camera clock controller; disabled on the SOM (qcs6490-citron.dtsi). */
+&camcc {
+	status = "okay";
+};
+
+&camss {
+	vdda-phy-supply = <&vreg_l10c_0p88>;
+	vdda-pll-supply = <&vreg_l6b_1p2>;
+
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+
+			csiphy0_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+				remote-endpoint = <&imx577_0_ep>;
+			};
+		};
+
+		port@1 {
+			reg = <1>;
+
+			csiphy1_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1>;
+				remote-endpoint = <&ov9282_ep>;
+			};
+		};
+
+		port@2 {
+			reg = <2>;
+
+			csiphy2_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+				remote-endpoint = <&imx577_2_ep>;
+			};
+		};
+
+		port@4 {
+			reg = <4>;
+
+			csiphy4_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+				remote-endpoint = <&imx577_4_ep>;
+			};
+		};
+	};
+};
+
+&cci0 {
+	status = "okay";
+};
+
+/* Narrow to bus 0; the stock state also muxes gpio75/76 for unpopulated CSI3. */
+&cci1 {
+	pinctrl-0 = <&cci2_default>;
+	pinctrl-1 = <&cci2_sleep>;
+	status = "okay";
+};
+
+&cci0_i2c0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	camera@1a {
+		compatible = "sony,imx577";
+		reg = <0x1a>;
+
+		reset-gpios = <&tlmm 113 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default", "suspend";
+		pinctrl-0 = <&cam0_default>;
+		pinctrl-1 = <&cam0_suspend>;
+
+		clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		assigned-clock-rates = <24000000>;
+
+		dovdd-supply = <&vreg_l19b_1p8>;
+		avdd-supply = <&vreg_l19b_1p8>;
+		dvdd-supply = <&vreg_l19b_1p8>;
+
+		port {
+			imx577_0_ep: endpoint {
+				link-frequencies = /bits/ 64 <600000000>;
+				data-lanes = <1 2 3 4>;
+				remote-endpoint = <&csiphy0_ep>;
+			};
+		};
+	};
+};
+
+&cci0_i2c1 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	camera@60 {
+		compatible = "ovti,ov9282";
+		reg = <0x60>;
+
+		/* ov9282 drives XCLR high to release reset (inverse of most drivers). */
+		reset-gpios = <&tlmm 11 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default", "suspend";
+		pinctrl-0 = <&cam1_default>;
+		pinctrl-1 = <&cam1_suspend>;
+
+		clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		assigned-clock-rates = <24000000>;
+
+		avdd-supply = <&vreg_l8c_1p62>;
+		dovdd-supply = <&vreg_l8c_1p62>;
+		dvdd-supply = <&vreg_l8c_1p62>;
+
+		port {
+			ov9282_ep: endpoint {
+				link-frequencies = /bits/ 64 <400000000>;
+				data-lanes = <1 2>;
+				remote-endpoint = <&csiphy1_ep>;
+			};
+		};
+	};
+};
+
+&cci1_i2c0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	camera@1a {
+		compatible = "sony,imx577";
+		reg = <0x1a>;
+
+		reset-gpios = <&tlmm 77 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default", "suspend";
+		pinctrl-0 = <&cam2_default>;
+		pinctrl-1 = <&cam2_suspend>;
+
+		clocks = <&camcc CAM_CC_MCLK2_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK2_CLK>;
+		assigned-clock-rates = <24000000>;
+
+		dovdd-supply = <&vreg_l19b_1p8>;
+		avdd-supply = <&vreg_l19b_1p8>;
+		dvdd-supply = <&vreg_l19b_1p8>;
+
+		port {
+			imx577_2_ep: endpoint {
+				link-frequencies = /bits/ 64 <600000000>;
+				data-lanes = <1 2 3 4>;
+				remote-endpoint = <&csiphy2_ep>;
+			};
+		};
+	};
+};
+
+/* CSI4 sensor I2C, bit-banged; delay-us = 5 is roughly 100 kHz. */
+/ {
+	cam4_i2c: i2c-cam4 {
+		compatible = "i2c-gpio";
+		sda-gpios = <&tlmm 161 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		scl-gpios = <&tlmm 162 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		i2c-gpio,delay-us = <5>;
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam4_i2c_state>;
+
+		camera@1a {
+			compatible = "sony,imx577";
+			reg = <0x1a>;
+
+			reset-gpios = <&tlmm 59 GPIO_ACTIVE_LOW>;
+			pinctrl-names = "default", "suspend";
+			pinctrl-0 = <&cam4_default>;
+			pinctrl-1 = <&cam4_suspend>;
+
+			clocks = <&camcc CAM_CC_MCLK4_CLK>;
+			assigned-clocks = <&camcc CAM_CC_MCLK4_CLK>;
+			assigned-clock-rates = <24000000>;
+
+			dovdd-supply = <&vreg_l8c_1p62>;
+			avdd-supply = <&vreg_l8c_1p62>;
+			dvdd-supply = <&vreg_l8c_1p62>;
+
+			port {
+				imx577_4_ep: endpoint {
+					link-frequencies = /bits/ 64 <600000000>;
+					data-lanes = <1 2 3 4>;
+					remote-endpoint = <&csiphy4_ep>;
+				};
+			};
+		};
+	};
+};
+
+/* Neither imx412 nor ov9282 has a standby control; hog STBY/PDN (active low) high. */
+&tlmm {
+	cam0_default: cam0-default-state {
+		mclk-pins {
+			pins = "gpio64";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		rst-pins {
+			pins = "gpio113";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam0_suspend: cam0-suspend-state {
+		mclk-pins {
+			pins = "gpio64";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		rst-pins {
+			pins = "gpio113";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam0_pwdn_hog: cam0-pwdn-hog {
+		gpio-hog;
+		gpios = <112 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "CAM0_STBY_N";
+	};
+
+	cam1_default: cam1-default-state {
+		mclk-pins {
+			pins = "gpio65";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		rst-pins {
+			pins = "gpio11";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam1_suspend: cam1-suspend-state {
+		mclk-pins {
+			pins = "gpio65";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		rst-pins {
+			pins = "gpio11";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam1_pwdn_hog: cam1-pwdn-hog {
+		gpio-hog;
+		gpios = <27 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "CAM1_STBY_N";
+	};
+
+	cam2_default: cam2-default-state {
+		mclk-pins {
+			pins = "gpio66";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		rst-pins {
+			pins = "gpio77";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam2_suspend: cam2-suspend-state {
+		mclk-pins {
+			pins = "gpio66";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		rst-pins {
+			pins = "gpio77";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam2_pwdn_hog: cam2-pwdn-hog {
+		gpio-hog;
+		gpios = <85 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "CAM2_STBY_N";
+	};
+
+	cam4_default: cam4-default-state {
+		mclk-pins {
+			pins = "gpio68";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		rst-pins {
+			pins = "gpio59";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam4_suspend: cam4-suspend-state {
+		mclk-pins {
+			pins = "gpio68";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		rst-pins {
+			pins = "gpio59";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam4_pwdn_hog: cam4-pwdn-hog {
+		gpio-hog;
+		gpios = <10 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "CAM4_STBY_N";
+	};
+
+	cam4_i2c_state: cam4-i2c-state {
+		pins = "gpio161", "gpio162";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+};
+
+/* CSI1/CSI4 enable L8C without a voltage; else it idles at its 1.62V floor. */
+&vreg_l8c_1p62 {
+	regulator-min-microvolt = <1800000>;
+	regulator-max-microvolt = <1800000>;
+};
+
+
+/* Venus HW codec: videocc is off on the SOM, the codec off in sc7280. */
+&videocc {
+	status = "okay";
+};
+
+/*
+ * DISP0 (DSI0) -> Waveshare 23448, 8" 1280x800 IPS, on 2 of the 4 data lanes.
+ * Connector: SDA/SCL=gpio56/57 (i2c14) RST=61 BL_EN=39 STBY/PDN=96 START=38
+ * ADP_PRESENT=105 RDY/INT=36 BL_PWM=pm8350c gpio8, interface rail L2C.
+ * Its adapter board is a DSI-to-DPI bridge that sequences the panel and dims the
+ * backlight over I2C, so no DISP0 control pin is needed; RST/BL_EN are only held
+ * de-asserted for adapters that pass them through, the rest are unconsumed.
+ */
+&dispcc {
+	status = "okay";
+};
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi {
+	vdda-supply = <&vreg_l6b_1p2>;
+	status = "okay";
+};
+
+&mdss_dsi_phy {
+	vdds-supply = <&vreg_l10c_0p88>;
+	status = "okay";
+};
+
+&mdss_dsi0_out {
+	remote-endpoint = <&ws_bridge_in>;
+	data-lanes = <0 1>;
+};
+
+&i2c14 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/* power-supply is required by the binding; the driver never touches it. */
+	bridge@45 {
+		compatible = "waveshare,dsi2dpi";
+		reg = <0x45>;
+		power-supply = <&vreg_l2c_1p62>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&disp0_ctrl_state>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				ws_bridge_in: endpoint {
+					data-lanes = <1 2>;
+					remote-endpoint = <&mdss_dsi0_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				ws_bridge_out: endpoint {
+					remote-endpoint = <&ws_panel_in>;
+				};
+			};
+		};
+	};
+};
+
+/ {
+	/* Dumb DPI panel behind the bridge; vendor 1280x800 60 Hz timings. */
+	panel {
+		compatible = "waveshare,23448", "panel-dpi";
+		power-supply = <&vreg_l2c_1p62>;
+		width-mm = <171>;
+		height-mm = <107>;
+
+		panel-timing {
+			clock-frequency = <83333000>;
+			hactive = <1280>;
+			hfront-porch = <156>;
+			hsync-len = <20>;
+			hback-porch = <40>;
+			vactive = <800>;
+			vfront-porch = <40>;
+			vsync-len = <48>;
+			vback-porch = <40>;
+			hsync-active = <0>;
+			vsync-active = <0>;
+			de-active = <1>;
+			pixelclk-active = <1>;
+		};
+
+		port {
+			ws_panel_in: endpoint {
+				remote-endpoint = <&ws_bridge_out>;
+			};
+		};
+	};
+};
+
+/* panel-simple enables power-supply without a voltage; else L2C idles at 1.62V. */
+&vreg_l2c_1p62 {
+	regulator-min-microvolt = <1800000>;
+	regulator-max-microvolt = <1800000>;
+};
+
+&tlmm {
+	/* Panel reset (61, active low) + backlight enable (39), applied at bridge probe. */
+	disp0_ctrl_state: disp0-ctrl-state {
+		pins = "gpio61", "gpio39";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+
+	/* Unconsumed DISP0 outputs: STBY/PDN(96), START(38). */
+	disp0_misc_state: disp0-misc-state {
+		pins = "gpio96", "gpio38";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	/* Unconsumed DISP0 inputs: ADP_PRESENT(105), RDY/INT(36). */
+	disp0_status_state: disp0-status-state {
+		pins = "gpio105", "gpio36";
+		function = "gpio";
+		bias-pull-up;
+	};
+};
+
+&venus {
+	status = "okay";
+};
+
+/*
+ * No DP alt-mode route out of USB0, and the qmpphy DP aux_bridge would make DP
+ * defer forever, costing the DPU /dev/dri/card0. Sever the of-graph link both ends
+ * (here, not in the camx overlay, since overlays cannot delete base properties).
+ */
+&mdss_dp_out {
+	/delete-property/ remote-endpoint;
+};
+
+&usb_dp_qmpphy_dp_in {
+	/delete-property/ remote-endpoint;
+};

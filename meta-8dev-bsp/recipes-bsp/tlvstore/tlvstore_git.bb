@@ -4,7 +4,7 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=901493caddf8a4e12c198b0a0431c2f9"
 
 inherit update-rc.d systemd
 
-COMPATIBLE_MACHINE = "tobufi"
+COMPATIBLE_MACHINE = "(tobufi|citron)"
 
 DEPENDS += "xz"
 
@@ -23,14 +23,19 @@ SRC_URI:append:tobufi = "\
     file://8dev-tobufi-legacy \
     file://8dev-tobufi-initial \
 "
+SRC_URI:append:citron = "\
+    file://8dev-citron-store \
+"
 SRCREV = "${TLVS_REV}"
 
 S = "${WORKDIR}/git"
 
 STORAGE_FILE = "/etc/eeprom"
 STORAGE_FILE:tobufi = "/sys/bus/i2c/devices/0-0056/eeprom"
+STORAGE_FILE:citron = "/dev/disk/by-partlabel/tlvstore"
 STORAGE_SIZE = "8192"
 STORAGE_SIZE:tobufi = ""
+STORAGE_SIZE:citron = ""
 STORAGE_OFFSET = "0"
 STORAGE_OFFSET:tobufi = "512"
 
@@ -57,6 +62,11 @@ do_install:append:tobufi() {
     install -m 0644 ${WORKDIR}/8dev-tobufi-store ${D}${datadir}/tlvs
     install -m 0644 ${WORKDIR}/8dev-tobufi-legacy ${D}${datadir}/tlvs
     install -m 0644 ${WORKDIR}/8dev-tobufi-initial ${D}${datadir}/tlvs
+}
+
+do_install:append:citron() {
+    install -d ${D}${datadir}/tlvs
+    install -m 0644 ${WORKDIR}/8dev-citron-store ${D}${datadir}/tlvs
 }
 
 FILES:${PN} += "${datadir}"

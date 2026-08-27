@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "QCS6490 DISP0 MIPI-DSI panel output"
+define KFEATURE_COMPATIBILITY board
+
+# The upstream waveshare bridge attaches its DSI peripheral from bridge_attach,
+# which never completes on msm (component-framework DSI host).
+patch patches/drm-waveshare-attach-dsi-in-probe.patch
+
+kconf hardware display.cfg
