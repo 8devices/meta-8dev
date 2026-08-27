@@ -10,7 +10,7 @@ DEPENDS += "xz"
 
 TLVS_BRANCH ?= "master"
 TLVS_URI ?= "git://github.com/8devices/tlvstore.git;protocol=https"
-TLVS_REV ?= "bf53bdb5f84143d2f2347d6a26242ef57bf09e35"
+TLVS_REV ?= "ad919ee81ad2aa0d09f623ae72687fdbe8ce1422"
 
 SRC_URI = "\
     ${TLVS_URI};branch=${TLVS_BRANCH} \
