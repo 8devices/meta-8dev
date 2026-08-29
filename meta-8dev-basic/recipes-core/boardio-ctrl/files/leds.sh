@@ -7,7 +7,7 @@ PREV_STATE_FILE="$LED_STATE_ROOT/previous_leds_state"
 
 led_get() {
 	[ -z "$1" ] && return 1
-	led_name=$(grep "$1" "$LED_CONF" | cut -d '=' -f1)
+	led_name=$(grep -m1 "^[^#]*=$1\$" "$LED_CONF" 2>/dev/null | cut -d '=' -f1)
 	[ -z "$led_name" ] && return 1
 	led_path="$led_root/$led_name"
 	[ -d "$led_path" ] || return 1
@@ -16,7 +16,7 @@ led_get() {
 
 led_blink() {
 	led=$(led_get "$1")
-	[ -n "$led" ] || return
+	[ -n "$led" ] || return 0
 
         echo "timer" > "$led/trigger" 2>/dev/null
         echo 1 > "$led/brightness" 2>/dev/null
@@ -26,7 +26,7 @@ led_blink() {
 
 led_on() {
 	led=$(led_get "$1")
-	[ -n "$led" ] || return
+	[ -n "$led" ] || return 0
 
 	echo "none" > "$led/trigger" 2>/dev/null
 	echo 1 > "$led/brightness" 2>/dev/null
@@ -34,7 +34,7 @@ led_on() {
 
 led_off() {
 	led=$(led_get "$1")
-	[ -n "$led" ] || return
+	[ -n "$led" ] || return 0
 	
 	echo "none" > "$led/trigger" 2>/dev/null
 	echo 0 > "$led/brightness" 2>/dev/null
@@ -42,7 +42,7 @@ led_off() {
 
 save_led_state() {
 	mkdir -p "$LED_STATE_ROOT"
-	mv "$CURR_STATE_FILE" "$PREV_STATE_FILE"
+	[ -e "$CURR_STATE_FILE" ] && mv "$CURR_STATE_FILE" "$PREV_STATE_FILE"
 	tmp_state_file=$(mktemp)
 	echo "$1" > "$tmp_state_file"
 	mv "$tmp_state_file" "$CURR_STATE_FILE"

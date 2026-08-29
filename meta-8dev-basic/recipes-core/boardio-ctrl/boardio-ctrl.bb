@@ -14,6 +14,10 @@ S = "${WORKDIR}/btnpoll"
 
 inherit pkgconfig
 
+# board-led.conf/board-btn.conf are per-board maps, and the A53 boards would
+# otherwise share one package.
+PACKAGE_ARCH = "${MACHINE_ARCH}"
+
 DEPENDS = "libevdev"
 
 RDEPENDS:${PN} = "libevdev"
