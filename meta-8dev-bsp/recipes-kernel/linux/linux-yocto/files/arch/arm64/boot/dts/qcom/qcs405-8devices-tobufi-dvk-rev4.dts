@@ -19,6 +19,19 @@
 		serial2 = &blsp1_uart1;
 		serial3 = &blsp2_uart0;
 	};
+
+	/* Force-USB-boot button, wired from rev4 onwards. */
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio_keys>;
+
+		usb-boot@45 {
+			label = "USB Boot Button";
+			linux,code = <BTN_0>;
+			gpios = <&tlmm 45 GPIO_ACTIVE_HIGH>;
+		};
+	};
 };
 
 &tlmm {
@@ -26,6 +39,14 @@
 		pins = "gpio105";
 		function = "gpio";
 		bias-disable;
+		input-enable;
+	};
+
+	gpio_keys: gpio-keys-pins {
+		pins = "gpio45";
+		function = "gpio";
+		bias-pull-down;
+		drive-strength = <2>;
 		input-enable;
 	};
 };
