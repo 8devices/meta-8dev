@@ -47,6 +47,22 @@
 			reusable;
 			linux,cma-default;
 		};
+
+		/* Top of DRAM, outside every other reserved region. DRAM is
+		 * not power cycled by a warm reset, so the console and dmesg
+		 * records survive one and can be read back from
+		 * /sys/fs/pstore on the next boot. Without this node
+		 * CONFIG_PSTORE_RAM has no backend and pstore stays empty,
+		 * which is why a spontaneous reset currently leaves no trace.
+		 */
+		ramoops@bfe00000 {
+			compatible = "ramoops";
+			reg = <0 0xbfe00000 0 0x200000>;
+			console-size = <0x100000>;
+			record-size = <0x8000>;
+			pmsg-size = <0x8000>;
+			ecc-size = <16>;
+		};
 	};
 
 	vph_pwr: regulator-3v3 {
