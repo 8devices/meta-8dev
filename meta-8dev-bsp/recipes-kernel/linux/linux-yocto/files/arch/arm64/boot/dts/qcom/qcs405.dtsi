@@ -22,4 +22,21 @@
 
 		status = "disabled";
 	};
+
+	/*
+	 * qcs404.dtsi describes no interrupt, so qcom-wdt cannot offer a
+	 * pretimeout and a hang is a silent reset. Every mainline SoC that
+	 * declares one for this block puts the bark on SPI 3 -- ipq5332,
+	 * ipq6018, ipq8074, ipq9574, sm6115, qcm2290, msm8994 -- and the two
+	 * that declare both use SPI 4 for the bite, which qcom-wdt never
+	 * claims: the hardware resets on it regardless.
+	 *
+	 * Claiming the bark alone changes behaviour: probe sets
+	 * wdd.pretimeout = 1, so it lands a second ahead of the bite even with
+	 * nothing configured. Whether that panics or just logs is soc.cfg's
+	 * call.
+	 */
+	watchdog@b017000 {
+		interrupts = <GIC_SPI 3 IRQ_TYPE_EDGE_RISING>;
+	};
 };
