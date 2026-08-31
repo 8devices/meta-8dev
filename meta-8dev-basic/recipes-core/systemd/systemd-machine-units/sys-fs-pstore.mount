@@ -1,0 +1,19 @@
+# Nothing else mounts pstore: it is not one of the API filesystems systemd
+# mounts on its own, and the stock fstab does not name it. Without this the
+# ramoops records survive the reset but stay unreachable, which is no use on a
+# board that has just rebooted on its own in the field.
+[Unit]
+Description=Persistent Storage File System
+Documentation=https://docs.kernel.org/admin-guide/ramoops.html
+DefaultDependencies=no
+ConditionPathExists=/sys/fs/pstore
+Before=sysinit.target
+
+[Mount]
+What=pstore
+Where=/sys/fs/pstore
+Type=pstore
+Options=nosuid,nodev,noexec
+
+[Install]
+WantedBy=sysinit.target
