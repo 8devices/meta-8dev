@@ -17,6 +17,16 @@ QCOM_BOOTIMG_ROOTFS = "/dev/mmcblk0p24"
 
 KERNEL_CMDLINE_EXTRA = "no_console_suspend=1 net.ifnames=0"
 
+# systemd seds this into RebootWatchdogSec=: PID 1 arms the apss watchdog with
+# it before handing over to systemd-shutdown, so a wedged reboot resets instead
+# of hanging. Reboot only -- poweroff, halt and kexec leave the timer at 0,
+# which disarms it. Poky defaults to 60; a measured reboot here takes ~12s.
+#
+# Mind what the budget covers: systemd-shutdown pings once as it arms, then not
+# again until the unmount loop, so the sync and both kill waits are inside it.
+# A flush slower than this is cut off by the reset, not given headroom by it.
+WATCHDOG_TIMEOUT = "30"
+
 IMAGE_CLASSES += "image_types_android"
 
 IMAGE_FSTYPES += "ext4.gz ext4-sparse"
