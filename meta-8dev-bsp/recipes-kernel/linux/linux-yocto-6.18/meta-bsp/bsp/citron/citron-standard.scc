@@ -27,7 +27,9 @@ include bsp/citron/display.scc
 include cfg/8dev/usb-phy.scc
 include cfg/8dev/rtl8139.scc
 include cfg/8dev/qcn9274.scc
+include cfg/8dev/efivars.scc
 
 patch patches/pci-qcom-force-synchronous-probe.patch
 patch patches/qcom-scm-reboot-edl-enters-download-mode.patch
 patch patches/media-qcom-camss-bind-sensors-independently.patch
+patch patches/qcom-scm-allow-qseecom-on-citron.patch

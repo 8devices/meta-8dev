@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Justinas Grauslis <justinas@8devices.com>
+Date: Wed, 10 Sep 2026 12:00:00 +0300
+Subject: [PATCH] QCLINUX: firmware: qcom_scm: allow qseecom on 8devices citron
+
+UEFI variables on this platform are not reachable through EFI runtime
+services. The firmware says so itself, in QcomPkg/Drivers/VariableDxe:
+
+    /* UEFI Variable services through UEFI API unsupported at runtime
+       All runtime access to UEFI variable services is through
+       HLOS SCM driver */
+
+The supported path is qcom_qseecom_uefisecapp, which talks to the
+qcom.tz.uefisecapp trusted application over SCM and registers itself as an
+efivars backend, so /sys/firmware/efi/efivars works with the ordinary
+tools. CONFIG_QCOM_QSEECOM and CONFIG_QCOM_QSEECOM_UEFISECAPP are already
+enabled for this machine.
+
+What blocks it is the machine allowlist here, which so far only lists
+Windows-on-Snapdragon laptops and Qualcomm X Elite reference boards. The
+version probe above the check succeeds on citron - the boot log shows
+
+    qcom_scm: qseecom: found qseecom with version 0x...
+    qcom_scm: qseecom: untested machine, skipping
+
+so the TA is present and answering; only the allowlist entry is missing.
+
+Match on "8devices,citron" rather than a per-carrier compatible: every
+citron board (generic, dvk, dvk-rev2, robovision, robovision-rev2) carries
+it as the SOM-level compatible, so one entry covers all of them and future
+carriers inherit it.
+
+The re-entrancy caveat in the comment still applies. Nothing in our
+userspace calls the qseecom interface concurrently, and the only in-tree
+client is the uefisecapp efivars backend.
+---
+ drivers/firmware/qcom/qcom_scm.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -2033,5 +2033,6 @@
+  */
+ static const struct of_device_id qcom_scm_qseecom_allowlist[] __maybe_unused = {
++	{ .compatible = "8devices,citron" },
+ 	{ .compatible = "asus,vivobook-s15" },
+ 	{ .compatible = "asus,zenbook-a14-ux3407qa" },
+ 	{ .compatible = "asus,zenbook-a14-ux3407ra" },
