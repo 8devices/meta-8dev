@@ -300,7 +300,7 @@
 		thermal-governor = "bang_bang";
 		trips {
 			fan_trip: fan-trip {
-				temperature = <90000>;
+				temperature = <75000>;
 				hysteresis = <10000>;
 				type = "active";
 			};
