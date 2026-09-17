@@ -34,15 +34,15 @@ KERNEL_FEATURES:append:citron = " ${CAMERA_KERNEL_FEATURE}"
 KERNEL_EXTRA_FEATURES:citron = ""
 
 # Qualcomm UEFI resolves its platform fixups against the __symbols__ node this
-# emits; without it boot fails in ufdt_overlay_do_fixups.
+# emits; without it boot fails in ufdt_overlay_do_fixups. fdtoverlay needs it too.
 KERNEL_DTC_FLAGS:append:citron = " -@"
 
 # Both kernels need this: the board dts describes the panel unconditionally, so a
 # DSI-less kernel leaves the DPU master unbound and loses /dev/dri/card0 entirely.
 KERNEL_FEATURES:append:citron = " bsp/qcs6490/display.scc"
 
-# Merged into the dtb so every blob is self-contained. Works on the installed
-# blobs, which is what the deploy tasks read.
+# Merged into the dtb so every blob in combined-dtb.dtb is self-contained. Works on
+# the installed blobs, which is what the deploy tasks read.
 merge_camera_dtbo() {
     for pair in ${CAMERA_DTB_OVERLAYS}; do
         dtb="${D}/${KERNEL_DTBDEST}/${pair%%:*}.dtb"
@@ -55,12 +55,24 @@ merge_camera_dtbo() {
     done
 }
 
-# meta-qcom wraps the dtb into dtb-${QCOM_DTB_DEFAULT}-image.vfat in a second
-# sstate task, and two tasks writing one deploy dir is not stable: the
-# StaleSetSceneTasks cleanup that runs with do_deploy removes the other task's
-# vfat while its stamp stays valid, so it never comes back and do_swuimage
-# fails. Build the vfat here, from the installed blobs do_deploy already reads.
+# One flashed dtb partition has to serve every Citron board, which neither of
+# meta-qcom's outputs (one vfat per board, or the FIT image) can do.
+#
+# It lives in do_deploy, with meta-qcom's do_qcom_dtbbin_deploy deleted below,
+# because two sstate tasks writing one deploy dir is not stable: the
+# StaleSetSceneTasks cleanup removes the other task's vfats while its stamp stays
+# valid, so they never come back and do_swuimage fails.
+#
+# The -S padding is for UEFI, which walks the pack by each header's totalsize and
+# needs the next header 8-byte aligned. expr, not $(( )): bitbake's shell parser
+# raises NotImplementedError on arithmetic expansion.
+#
+# A task-body append rather than a postfunc: sstate.bbclass puts
+# sstate_task_postfunc last, so a later postfunc would run after the sstate capture.
 do_deploy:append:citron() {
+    combined="${WORKDIR}/combined-dtb.dtb"
+    rm -f "$combined"
+
     for dtbf in ${KERNEL_DEVICETREE}; do
         dtb=$(normalize_dtb "$dtbf")
         case "$dtb" in
@@ -68,11 +80,18 @@ do_deploy:append:citron() {
         esac
         stem=$(basename $dtb .dtb)
         src="${D}/${KERNEL_DTBDEST}/$(basename $dtb)"
-        [ -f "$src" ] || bbfatal "dtb vfat: missing $src"
+        [ -f "$src" ] || bbfatal "combined-dtb: missing $src"
 
         mkfs.vfat -S ${QCOM_VFAT_SECTOR_SIZE} -C ${DEPLOYDIR}/dtb-$stem-image.vfat ${DTBBIN_SIZE}
         mcopy -i "${DEPLOYDIR}/dtb-$stem-image.vfat" -smpQ "$src" ::/combined-dtb.dtb
+
+        size=$(stat -c%s "$src")
+        dtc -q -I dtb -O dtb -S $(expr \( $size + 7 \) / 8 \* 8) "$src" >> "$combined"
     done
+
+    mkfs.vfat -S ${QCOM_VFAT_SECTOR_SIZE} -C ${DEPLOYDIR}/dtb-combined-image.vfat ${DTBBIN_SIZE}
+    mcopy -i "${DEPLOYDIR}/dtb-combined-image.vfat" -smpQ "$combined" ::/combined-dtb.dtb
+    rm -f "$combined"
 }
 
 # Task flags cannot take a machine override in this bitbake, hence anon python.
