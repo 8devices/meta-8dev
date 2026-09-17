@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "QCS6490 downstream Iris video codec"
+define KFEATURE_COMPATIBILITY all
+
+include cfg/8dev/v4l2-platform.scc
+include bsp/qcs6490/venus.scc
+
+kconf hardware iris.cfg

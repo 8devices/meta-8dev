@@ -1,0 +1,34 @@
+From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
+From: Justinas Grauslis <justinas@8devices.com>
+Date: Fri, 17 Jul 2026 12:00:00 +0300
+Subject: [PATCH] QCLINUX: soc: qcom: make QCOM_UBWC_CONFIG user-selectable
+
+QCOM_UBWC_CONFIG is a promptless tristate enabled only via "select" from
+DRM_MSM. On a headless build the GPU/DRM stack is disabled, so nothing selects
+it and <linux/soc/qcom/ubwc.h> compiles the stub whose
+qcom_ubwc_config_get_data() returns -EOPNOTSUPP. The downstream Iris video
+codec (iris-video-dlkm) treats that as fatal and fails to probe, even though
+the sc7280/qcm6490 UBWC data and driver are already in-tree.
+
+Give the symbol a prompt so it can be enabled from a config fragment
+independently of DRM_MSM.
+
+Signed-off-by: Justinas Grauslis <justinas@8devices.com>
+
+Upstream-Status: Inappropriate [gives a promptless symbol a prompt for the out-of-tree iris-video-dlkm]
+---
+ drivers/soc/qcom/Kconfig | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/soc/qcom/Kconfig b/drivers/soc/qcom/Kconfig
+--- a/drivers/soc/qcom/Kconfig
++++ b/drivers/soc/qcom/Kconfig
+@@ -298,7 +298,7 @@ endmenu
+ endmenu
+
+ config QCOM_UBWC_CONFIG
+-	tristate
++	tristate "Qualcomm UBWC configuration data"
+ 	help
+ 	  Most Qualcomm SoCs feature a number of Universal Bandwidth Compression
+ 	  (UBWC) engines across various IP blocks, which need to be initialized
