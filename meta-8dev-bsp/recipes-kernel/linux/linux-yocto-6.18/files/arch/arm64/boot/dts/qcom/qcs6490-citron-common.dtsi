@@ -86,6 +86,20 @@
 };
 
 /*
+ * DISP0 (DSI0). The panel comes from the board's *-panel-*.dtso when one is fitted;
+ * dispcc/mdss stay on regardless so the DPU still registers a writeback-only card0,
+ * which the GLES-only ML gst elements need. The pin states only hold RST/BL_EN
+ * de-asserted - the bridge itself sequences the panel over I2C.
+ */
+&dispcc {
+	status = "okay";
+};
+
+&mdss {
+	status = "okay";
+};
+
+/*
  * There is no Type-C connector here, and the qmpphy aux_bridge would make DP defer
  * forever, costing the DPU its card0. Done here because overlays cannot delete
  * base properties.
