@@ -4,6 +4,7 @@ define KFEATURE_COMPATIBILITY board
 
 # One kernel serves every Citron carrier, so the union of their hardware is
 # built in; each board's device tree decides what probes.
+include bsp/citron/eeprom.scc
 include bsp/citron/ethernet.scc
 include bsp/citron/qcn9274.scc
 include bsp/citron/panel.scc

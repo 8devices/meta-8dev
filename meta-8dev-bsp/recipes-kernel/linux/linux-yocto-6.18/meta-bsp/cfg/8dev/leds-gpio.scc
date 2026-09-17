@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "GPIO-attached LEDs and their triggers"
+define KFEATURE_COMPATIBILITY all
+
+kconf non-hardware leds-gpio.cfg
