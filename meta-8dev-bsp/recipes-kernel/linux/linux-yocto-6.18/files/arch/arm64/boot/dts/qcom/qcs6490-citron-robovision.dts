@@ -2,7 +2,8 @@
 
 /dts-v1/;
 
-#include "qcs6490-citron.dtsi"
+#include "qcs6490-citron-som.dtsi"
+#include "qcs6490-citron-common.dtsi"
 
 / {
 	model = "8devices Robonode Vision";
@@ -11,12 +12,10 @@
 
 	/*
 	 * Read by the Qualcomm bootloader DTB selector (not Linux) to pick this
-	 * DTB for the running hardware. msm-id = <soc-id soc-rev>: the Kodiak SoC
-	 * family (475 SM, 497 QCM, 498 QCS, 515 SM-LTE) 6490, rev >= 1.0.
-	 * board-id = <0x00PMPmPH subtype>: hw-platform 0x20, version 1.1, subtype 2.
-	 * Must match what the CDT (citron_cdt.bin) reports or the DTB is skipped.
+	 * DTB for the running hardware. board-id = <0x00PMPmPH subtype>:
+	 * hw-platform 0x20, version 1.1, subtype 2. Must match what the CDT
+	 * (citron_cdt.bin) reports or the DTB is skipped.
 	 */
-	qcom,msm-id = <497 0x10000>, <498 0x10000>, <475 0x10000>, <515 0x10000>;
 	qcom,board-id = <0x010120 2>;
 };
 
@@ -34,14 +33,6 @@
 };
 
 /*
- * No Type-C mux / pmic-glink on this carrier and the SS lanes arrive at a fixed
- * orientation, so delete the orientation-switch left at the sc7280 default.
- */
-&usb_1_qmpphy {
-	/delete-property/ orientation-switch;
-};
-
-/*
  * USB1 = SoC usb_2 (8c00000): fixed HOST, HS PHY only (USB 2.0). +5V is always on
  * via usb1_vbus below. Enable the controller + HS PHY (disabled by default in
  * sc7280). Drop the default usb-role-switch (targets the disabled EUD debugger);
@@ -50,13 +41,6 @@
 &usb_2 {
 	dr_mode = "host";
 	/delete-property/ usb-role-switch;
-	status = "okay";
-};
-
-&usb_2_hsphy {
-	vdda-pll-supply = <&vreg_l10c_0p88>;
-	vdda18-supply = <&vreg_l1c_1p8>;
-	vdda33-supply = <&vreg_l2b_3p072>;
 	status = "okay";
 };
 
@@ -109,39 +93,6 @@
 	};
 };
 
-/*
- * On-carrier I2C EEPROM: ST M24256E-FMC6TG (32 KB) on i2c11 (GPIO44 SDA, GPIO45
- * SCL; pinmux from sc7280). GPIO46 = WC write-protect via the at24 wp-gpios.
- * Main 32 KB array at 0x50; the "-F" 64-byte write-lockable page at 0x58 is not
- * instantiated.
- */
-
-/*
- * QUP wrapper 1 hosts i2c11 (EEPROM) and uart10/uart12; disabled by default in
- * sc7280, enable it or the OF core won't instantiate its children.
- * firmware-name is required: the GENI driver loads per-SE firmware from the
- * wrapper node for any SE the bootloader left unprogrammed (all of QUP1). Without
- * it i2c11/uart10/uart12 fail to probe (-EINVAL).
- */
-&qupv3_id_1 {
-	firmware-name = "qcom/qcs6490/qupv3fw.elf";
-	status = "okay";
-};
-
-&i2c11 {
-	clock-frequency = <400000>;
-	status = "okay";
-
-	eeprom@50 {
-		compatible = "atmel,24c256";
-		reg = <0x50>;
-		pagesize = <64>;
-		wp-gpios = <&tlmm 46 GPIO_ACTIVE_HIGH>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&eeprom_wc_state>;
-	};
-};
-
 &tlmm {
 	/* GPIO46 = EEPROM WC: GPIO output, used as the at24 write-protect line. */
 	eeprom_wc_state: eeprom-wc-state {
@@ -149,41 +100,6 @@
 		function = "gpio";
 		bias-disable;
 	};
-};
-
-/*
- * Five extra 4-wire GENI UARTs (CTS/RFR/TX/RX) exposed on the carrier; pinmux is
- * in sc7280, the nodes just default to disabled. uart1/3/4 are on QUP0 (enabled
- * by default), uart10/uart12 on QUP1 (enabled above). Pin map (CTS, RFR, TX, RX):
- *   uart1  (QUP0 SE1) : gpio4-7
- *   uart3  (QUP0 SE3) : gpio12-15
- *   uart4  (QUP0 SE4) : gpio16-19
- *   uart10 (QUP1 SE2) : gpio40-43
- *   uart12 (QUP1 SE4) : gpio48-51
- */
-&uart1 {
-	status = "okay";
-};
-
-&uart3 {
-	status = "okay";
-};
-
-&uart4 {
-	status = "okay";
-};
-
-&uart10 {
-	status = "okay";
-};
-
-/*
- * uart12 uses GPIO48-51, freed from gpio-reserved-ranges in the SOM dtsi. This
- * REQUIRES the matching XBL/TZ release of those pins; without it the board hangs
- * at gpiochip bringup (see the note in qcs6490-citron.dtsi).
- */
-&uart12 {
-	status = "okay";
 };
 
 /*
@@ -240,33 +156,6 @@
 		output-low;
 		bias-disable;
 	};
-};
-
-&pcie0 {
-	perst-gpios = <&tlmm 86 GPIO_ACTIVE_LOW>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&pcie0_reset_n>, <&pcie0_clkreq_n>;
-
-	/*
-	 * IOMMU stream-ID map for the PI7C9X2G304 switch topology.
-	 *
-	 * The stock sc7280 map assumes one endpoint, so the two RTL8111K NICs
-	 * behind the switch get the fallback SID 0x1c00 with no domain -> arm-smmu
-	 * "Format=2 TF" faults, AER storm, dead/unstable eth. Per-device SIDs don't
-	 * work either: assigning 0x1c02 makes qcom_smmu_write_s2cr() take a sync
-	 * external abort at attach (secure-world/hyp rejecting the stream).
-	 *
-	 * The switch has no ACS, so Linux puts every pcie0 device in one iommu
-	 * group anyway. Collapse all RIDs onto the known-good 0x1c00 with
-	 * iommu-map-mask = <0x0> - one SME/S2CR reused for all, no 0x1c02 abort.
-	 * Confirmed on hardware: removes both the s2cr abort and the TF faults. (A
-	 * separate pre-existing AER RxErr/UnsupReq storm remains, unrelated to the
-	 * IOMMU.)
-	 */
-	iommu-map = <0x0 &apps_smmu 0x1c00 0x1>;
-	iommu-map-mask = <0x0>;
-
-	status = "okay";
 };
 
 /*
@@ -482,16 +371,4 @@
 &vreg_l8c_1p62 {
 	regulator-min-microvolt = <1800000>;
 	regulator-max-microvolt = <1800000>;
-};
-
-/*
- * Venus HW video codec. videocc is disabled on the SOM (qcs6490-citron.dtsi) and
- * the codec is disabled by default in sc7280.dtsi; re-enable both here.
- */
-&videocc {
-	status = "okay";
-};
-
-&venus {
-	status = "okay";
 };
