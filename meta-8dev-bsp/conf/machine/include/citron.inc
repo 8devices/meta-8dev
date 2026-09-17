@@ -36,4 +36,11 @@ BAD_RECOMMENDATIONS:append = " \
     networkmanager-wifi \
 "
 
+# qairt-sdk recommends every HTP skel variant; only v68 matches QCS6490.
+BAD_RECOMMENDATIONS:append = " \
+    qairt-sdk-hexagon-v66 \
+    qairt-sdk-hexagon-v73 \
+    qairt-sdk-hexagon-v75 \
+"
+
 SERIAL_CONSOLES = "115200;ttyMSM0"

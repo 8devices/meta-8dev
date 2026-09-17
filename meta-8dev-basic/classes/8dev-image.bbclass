@@ -8,8 +8,10 @@
 FEATURE_PACKAGES_system-debug = "packagegroup-system-debug"
 FEATURE_PACKAGES_network-debug = "packagegroup-network-debug"
 FEATURE_PACKAGES_update-tools = "packagegroup-update-tools"
+FEATURE_PACKAGES_qnn = "packagegroup-ai-runtime"
 
 IMAGE_FEATURES:append = " ${@bb.utils.contains_any('DISTRO_FEATURES', 'camx camss', 'camera', '', d)}"
+IMAGE_FEATURES:append = " ${@bb.utils.contains('DISTRO_FEATURES', 'qnn', 'qnn', '', d)}"
 
 CORE_IMAGE_EXTRA_INSTALL:append = " board-conf radio-conf"
 
