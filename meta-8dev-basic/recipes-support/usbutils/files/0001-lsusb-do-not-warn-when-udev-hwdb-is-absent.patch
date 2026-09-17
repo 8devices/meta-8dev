@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Justinas Grauslis <justinas@8devices.com>
+Date: Thu, 16 Jul 2026 10:35:00 +0300
+Subject: [PATCH] lsusb: do not warn when the udev hwdb is unavailable
+
+names_init() fails when the udev hwdb is not installed. The 8dev-basic image
+intentionally omits udev-hwdb (a large vendor-name database that is dead weight
+on fixed hardware), so USB IDs are shown as numbers instead of names, which is
+fine. lsusb, however, printed "unable to initialize usb spec" to stderr on every
+run. Keep calling names_init() so names still resolve on images that do ship the
+hwdb, but drop the noisy warning.
+
+Upstream-Status: Inappropriate [8dev-basic intentionally omits udev-hwdb]
+
+Signed-off-by: Justinas Grauslis <justinas@8devices.com>
+---
+ lsusb.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/lsusb.c b/lsusb.c
+--- a/lsusb.c
++++ b/lsusb.c
+@@ -3939,8 +3939,7 @@
+ 
+ 
+ 	/* by default, print names as well as numbers */
+-	if (names_init() < 0)
+-		fprintf(stderr, "unable to initialize usb spec");
++	names_init();
+ 
+ 	status = 0;
+ 
