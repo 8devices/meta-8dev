@@ -1,6 +1,5 @@
 # MACHINEOVERRIDES already carries citron; the include only prepends qcom/qcm6490.
 require conf/machine/include/qcom-qcs6490.inc
-include conf/machine/include/citron-extras.inc
 
 PREFERRED_PROVIDER_virtual/kernel:citron ?= "linux-yocto"
 PREFERRED_VERSION_linux-yocto:citron ?= "6.18%"
