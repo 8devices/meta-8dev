@@ -6,6 +6,7 @@ define KMETA_EXTERNAL_BSP t
 
 include ktypes/8dev/standard.scc
 
+# --- Upstream HW feature includes ---
 include features/power/arm.scc
 include features/mmc/mmc-block.scc
 include features/i2c/i2c.scc
@@ -14,15 +15,29 @@ include features/pwm/pwm.scc
 include features/pci/pci.scc
 include features/usb/xhci-hcd.scc
 include cfg/timer/rtc.scc
-include cfg/8dev/gpio.scc
 
+# --- SoC hardware ---
 include bsp/qcs6490/soc.scc
+include bsp/qcs6490/serial.scc
+include bsp/qcs6490/thermal.scc
+include bsp/qcs6490/watchdog.scc
+include bsp/qcs6490/crypto.scc
 include bsp/qcs6490/pcie.scc
 include bsp/qcs6490/usb.scc
-include bsp/qcs6490/usb-gadget.scc
-include bsp/qcs6490/usb-host.scc
-include bsp/citron/storage.scc
+include bsp/qcs6490/usb-phy.scc
+include bsp/qcs6490/sdhci.scc
+include bsp/qcs6490/ufs.scc
 
+# --- SoM + carrier hardware ---
+include bsp/citron/som.scc
+
+# --- Hardware-agnostic policy ---
+include cfg/8dev/gpio.scc
+include cfg/8dev/usb-gadget.scc
+include cfg/8dev/usb-classes.scc
+include cfg/8dev/mac80211-debug.scc
+
+# --- Patches ---
 patch patches/pci-qcom-force-synchronous-probe.patch
 patch patches/qcom-scm-reboot-edl-enters-download-mode.patch
 patch patches/media-qcom-camss-bind-sensors-independently.patch

@@ -2,4 +2,4 @@
 define KFEATURE_DESCRIPTION "QCS6490 Venus hardware video codec"
 define KFEATURE_COMPATIBILITY all
 
-kconf non-hardware qcs6490-venus.cfg
+kconf hardware venus.cfg

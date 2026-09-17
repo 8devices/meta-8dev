@@ -2,4 +2,4 @@
 define KFEATURE_DESCRIPTION "USB gadget (ConfigFS composite + functions)"
 define KFEATURE_COMPATIBILITY all
 
-kconf hardware usb-gadget.cfg
+kconf non-hardware usb-gadget.cfg
