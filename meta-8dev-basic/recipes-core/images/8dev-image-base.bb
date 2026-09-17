@@ -15,6 +15,11 @@ CORE_IMAGE_EXTRA_INSTALL:append:citron = " dmidecode"
 # Citron only: USB (UVC) camera -> network video streaming via GStreamer.
 IMAGE_FEATURES:append:citron = " video-streaming"
 
+# Build/deploy machine artifacts with the image. esp-qcom-image is efi-gated
+# (features_check); flashtools self-gates on fastboot in its own recipe.
+EXTRA_IMAGEDEPENDS:append = " ${@bb.utils.contains('MACHINE_FEATURES', 'efi', 'esp-qcom-image:do_image_complete', '', d)}"
+EXTRA_IMAGEDEPENDS:append = " flashtools:do_deploy"
+
 inherit 8dev-image
 inherit core-image
 
