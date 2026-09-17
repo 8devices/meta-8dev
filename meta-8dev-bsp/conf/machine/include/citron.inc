@@ -30,6 +30,12 @@ MACHINE_EXTRA_RRECOMMENDS:append = " \
     linux-firmware-qcom-vpu \
 "
 
+# At machine scope rather than in a video-streaming packagegroup: a USB camera is
+# independent of CAMERA_STACK and the kernel carries uvc-camera.scc unconditionally.
+MACHINE_EXTRA_RRECOMMENDS:append = " \
+    kernel-module-uvcvideo \
+"
+
 BAD_RECOMMENDATIONS:append = " \
     kernel-module-wlan-platform \
     kernel-module-qcacld-wlan \
