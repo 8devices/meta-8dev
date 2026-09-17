@@ -1,0 +1,5 @@
+# A QCN9274-class module puts two PHYs on one PCIe function. Naming by PHY index
+# keeps wlan0=phy0 / wlan1=phy1 stable; the previous flag-guarded rule raced both
+# netdevs onto wlan0 and left the mapping probe-order dependent.
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="wlan*", ENV{ID_PATH}=="platform-1c08000.pcie-pci-0001:01:00.0", \
+	PROGRAM="/bin/sh -c 'cat /sys%p/phy80211/index'", NAME="wlan%c"

@@ -14,7 +14,7 @@ SRC_URI = "\
     file://10-bridge-ports.network \
 "
 
-SRC_URI:append:robovision = "\
+SRC_URI:append:citron = "\
     file://hostapd-wlan0.conf \
     file://hostapd-wlan1.conf \
     file://10-wait-bridge.conf \
@@ -32,7 +32,7 @@ do_install() {
     install -m 0644 ${UNPACKDIR}/10-bridge-ports.network ${D}${sysconfdir}/systemd/network/
 }
 
-do_install:append:robovision() {
+do_install:append:citron() {
     # Per-radio AP configs (hostapd@wlanN reads /etc/hostapd/wlanN.conf).
     install -d ${D}${sysconfdir}/hostapd
     install -m 0644 ${UNPACKDIR}/hostapd-wlan0.conf ${D}${sysconfdir}/hostapd/wlan0.conf
@@ -53,11 +53,11 @@ FILES:${PN} = "\
     ${sysconfdir}/systemd/network \
 "
 
-FILES:${PN}:append:robovision = "\
+FILES:${PN}:append:citron = "\
     ${sysconfdir}/hostapd \
     ${systemd_system_unitdir}/hostapd@.service.d \
     ${systemd_system_unitdir}/network.target.wants \
 "
 
 # hostapd ships the binary + the hostapd@.service template we instantiate.
-RDEPENDS:${PN}:append:robovision = " hostapd"
+RDEPENDS:${PN}:append:citron = " hostapd"

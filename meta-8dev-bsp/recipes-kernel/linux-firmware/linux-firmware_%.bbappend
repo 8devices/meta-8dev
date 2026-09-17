@@ -1,16 +1,16 @@
-DEPENDS:append:robovision = "qca-swiss-army-knife-native"
+DEPENDS:append:citron = " qca-swiss-army-knife-native"
 
-FILESEXTRAPATHS:prepend:robovision := "${THISDIR}/${PN}:"
+FILESEXTRAPATHS:prepend:citron := "${THISDIR}/${PN}:"
 
-SRC_URI:append:robovision = " \
+SRC_URI:append:citron = " \
     file://QCN9274 \
 "
 
-do_compile:append:robovision() {
+do_compile:append:citron() {
      (cd ${UNPACKDIR}/QCN9274; ath12k-bdencoder -c board-2.json -o board-2.bin)
 }
 
-do_install:append:robovision() {
+do_install:append:citron() {
     install -m 0644 ${UNPACKDIR}/QCN9274/board-2.bin \
         ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0
 
@@ -24,7 +24,7 @@ do_install:append:robovision() {
 }
 
 # Cleanup preinstalled files.
-do_install:append:robovision() {
+do_install:append:citron() {
     rm -f ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/firmware-2.bin
     # Both on-board NICs are RTL8168H/8111H and load only rtl8168h-2.fw; drop the
     # other rtl8168 variant blobs.
