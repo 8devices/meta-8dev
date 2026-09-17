@@ -1,0 +1,12 @@
+[Unit]
+Description=Bounded tmpfs for CamX core dumps
+Before=cam-server.service
+
+[Mount]
+What=tmpfs
+Where=/var/cache/camera/coredump
+Type=tmpfs
+Options=size=64M,mode=0755,nosuid,nodev
+
+[Install]
+WantedBy=multi-user.target

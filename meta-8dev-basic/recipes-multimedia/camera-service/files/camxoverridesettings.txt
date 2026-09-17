@@ -1,0 +1,5 @@
+EISV2Enable=0
+EISV3Enable=0
+enableNCSService=0
+enableCameraCoreDumpBinary=0
+enableCameraCoreDumpText=0
