@@ -6,3 +6,5 @@ IMAGE_ROOTFS_SIZE:citron = "131072"
 IMAGE_ROOTFS_EXTRA_SPACE:citron = "0"
 IMAGE_OVERHEAD_FACTOR:citron = "1"
 
+# Compressed ESP for the swupdate .swu (update-image-8dev-base).
+IMAGE_FSTYPES:append:citron = " vfat.gz"

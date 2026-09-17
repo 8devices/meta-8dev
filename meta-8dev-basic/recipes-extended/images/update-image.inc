@@ -8,3 +8,6 @@ SRC_URI = "\
     file://sw-description \
     file://change_boot_slot.sh \
 "
+
+# sw-description bundles the kernel-deployed dtb-${QCOM_DTB_DEFAULT}-image.vfat.
+do_swuimage[depends] += "virtual/kernel:do_deploy"
