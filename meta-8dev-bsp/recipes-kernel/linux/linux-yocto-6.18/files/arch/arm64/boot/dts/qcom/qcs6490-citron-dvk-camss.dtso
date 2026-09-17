@@ -1,0 +1,208 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Mainline CAMSS + libcamera pipeline for the Citron DVK. CSI0/CSI1 come from the
+ * shared dtsi; the DVK adds CSI2 and CSI4. CSI3 is unpopulated.
+ *
+ *   conn  sensor  CSIPHY  I2C bus             addr  MCLK  RST  STBY
+ *   CSI2  IMX577  2       cci1_i2c0 (73/74)   0x1a  66    77   85
+ *   CSI4  IMX577  4       i2c-gpio (161/162)  0x1a  68    59   10
+ */
+
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/clock/qcom,camcc-sc7280.h>
+#include <dt-bindings/gpio/gpio.h>
+
+#include "qcs6490-citron-camss.dtsi"
+
+&camss {
+	ports {
+		port@2 {
+			reg = <2>;
+
+			csiphy2_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+				remote-endpoint = <&imx577_2_ep>;
+			};
+		};
+
+		port@4 {
+			reg = <4>;
+
+			csiphy4_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+				remote-endpoint = <&imx577_4_ep>;
+			};
+		};
+	};
+};
+
+/* Narrowed to bus 0: the stock state also muxes gpio75/76 for unpopulated CSI3. */
+&cci1 {
+	pinctrl-0 = <&cci2_default>;
+	pinctrl-1 = <&cci2_sleep>;
+	status = "okay";
+};
+
+&cci1_i2c0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	camera@1a {
+		compatible = "sony,imx577";
+		reg = <0x1a>;
+
+		reset-gpios = <&tlmm 77 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default", "suspend";
+		pinctrl-0 = <&cam2_default>;
+		pinctrl-1 = <&cam2_suspend>;
+
+		clocks = <&camcc CAM_CC_MCLK2_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK2_CLK>;
+		assigned-clock-rates = <24000000>;
+
+		dovdd-supply = <&vreg_l19b_1p8>;
+		avdd-supply = <&vreg_l19b_1p8>;
+		dvdd-supply = <&vreg_l19b_1p8>;
+
+		port {
+			imx577_2_ep: endpoint {
+				link-frequencies = /bits/ 64 <600000000>;
+				data-lanes = <1 2 3 4>;
+				remote-endpoint = <&csiphy2_ep>;
+			};
+		};
+	};
+};
+
+/* Bit-banged: GPIO161/162 have no CCI or QUP function. delay-us 5 is ~100 kHz. */
+&{/} {
+	cam4_i2c: i2c-cam4 {
+		compatible = "i2c-gpio";
+		sda-gpios = <&tlmm 161 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		scl-gpios = <&tlmm 162 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		i2c-gpio,delay-us = <5>;
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam4_i2c_state>;
+
+		camera@1a {
+			compatible = "sony,imx577";
+			reg = <0x1a>;
+
+			reset-gpios = <&tlmm 59 GPIO_ACTIVE_LOW>;
+			pinctrl-names = "default", "suspend";
+			pinctrl-0 = <&cam4_default>;
+			pinctrl-1 = <&cam4_suspend>;
+
+			clocks = <&camcc CAM_CC_MCLK4_CLK>;
+			assigned-clocks = <&camcc CAM_CC_MCLK4_CLK>;
+			assigned-clock-rates = <24000000>;
+
+			dovdd-supply = <&vreg_l8c_1p62>;
+			avdd-supply = <&vreg_l8c_1p62>;
+			dvdd-supply = <&vreg_l8c_1p62>;
+
+			port {
+				imx577_4_ep: endpoint {
+					link-frequencies = /bits/ 64 <600000000>;
+					data-lanes = <1 2 3 4>;
+					remote-endpoint = <&csiphy4_ep>;
+				};
+			};
+		};
+	};
+};
+
+&tlmm {
+	cam2_default: cam2-default-state {
+		mclk-pins {
+			pins = "gpio66";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		rst-pins {
+			pins = "gpio77";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam2_suspend: cam2-suspend-state {
+		mclk-pins {
+			pins = "gpio66";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		rst-pins {
+			pins = "gpio77";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam2_pwdn_hog: cam2-pwdn-hog {
+		gpio-hog;
+		gpios = <85 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "CAM2_STBY_N";
+	};
+
+	cam4_default: cam4-default-state {
+		mclk-pins {
+			pins = "gpio68";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		rst-pins {
+			pins = "gpio59";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam4_suspend: cam4-suspend-state {
+		mclk-pins {
+			pins = "gpio68";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		rst-pins {
+			pins = "gpio59";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam4_pwdn_hog: cam4-pwdn-hog {
+		gpio-hog;
+		gpios = <10 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "CAM4_STBY_N";
+	};
+
+	cam4_i2c_state: cam4-i2c-state {
+		pins = "gpio161", "gpio162";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+};

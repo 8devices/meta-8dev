@@ -1,0 +1,303 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+/dts-v1/;
+
+#include "qcs6490-citron-som.dtsi"
+#include "qcs6490-citron-common.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+	model = "8devices Citron DVK";
+	compatible = "8devices,citron-dvk", "8devices,citron",
+		"qcom,qcm6490";
+
+	/* Must agree with the CDT flashed by edl_flash.py -b. */
+	qcom,board-id = <0x00010020 0x81>,	/* variant + subtype cell */
+			<0x81010020 0x81>;	/* subtype also in bits 31-24 */
+};
+
+/*
+ * USB0 = usb_1 (J24, SS+HS), USB1 = usb_2 (J31, HS). A PI5USB30213A per port
+ * switches VBUS itself, so no VBUS regulator here; it reports the role on GPIO52/53.
+ *
+ * BOARD ERRATUM: both CC chips drive one shared net, so the two pins always read
+ * alike and the ports cannot hold opposite roles. Wiring, not software.
+ */
+&usb_1 {
+	dr_mode = "otg";
+	usb-role-switch;
+};
+
+&usb_1_dwc3_hs {
+	remote-endpoint = <&usb0_conn_ep>;
+};
+
+/* Keep the stock usb-role-switch, repointed from the disabled EUD to USB1. */
+&usb_2 {
+	dr_mode = "otg";
+	status = "okay";
+};
+
+&usb2_role_switch {
+	remote-endpoint = <&usb1_conn_ep>;
+};
+
+&eud_ep {
+	/delete-property/ remote-endpoint;
+};
+
+&tlmm {
+	/*
+	 * Measured: with the internal pull-up off both pins read low in every plug
+	 * state, wedging both ports in host mode. Revisit if the nets gain a pull-up.
+	 */
+	usb0_id_state: usb0-id-state {
+		pins = "gpio52";
+		function = "gpio";
+		bias-disable;
+	};
+
+	usb1_id_state: usb1-id-state {
+		pins = "gpio53";
+		function = "gpio";
+		bias-disable;
+	};
+};
+
+/ {
+	/* ACTIVE_HIGH because usb-conn-gpio picks host on logical 0, as the CC chip drives it. */
+	usb0_connector: connector-usb0 {
+		compatible = "gpio-usb-b-connector", "usb-b-connector";
+		label = "USB0";
+		id-gpios = <&tlmm 52 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb0_id_state>;
+
+		port {
+			usb0_conn_ep: endpoint {
+				remote-endpoint = <&usb_1_dwc3_hs>;
+			};
+		};
+	};
+
+	usb1_connector: connector-usb1 {
+		compatible = "gpio-usb-b-connector", "usb-b-connector";
+		label = "USB1";
+		id-gpios = <&tlmm 53 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb1_id_state>;
+
+		port {
+			usb1_conn_ep: endpoint {
+				remote-endpoint = <&usb2_role_switch>;
+			};
+		};
+	};
+};
+
+&tlmm {
+	eeprom_wc_state: eeprom-wc-state {
+		pins = "gpio46";
+		function = "gpio";
+		bias-disable;
+	};
+};
+
+/* microSD (J4). vqmmc is fixed 1.8V, so no CMD11 switch and no UHS-I: ~25 MB/s. */
+&sdhc_2 {
+	pinctrl-0 = <&sdc2_clk>, <&sdc2_cmd>, <&sdc2_data>, <&sd_cd_state>;
+	pinctrl-1 = <&sdc2_clk_sleep>, <&sdc2_cmd_sleep>, <&sdc2_data_sleep>, <&sd_cd_state>;
+	pinctrl-names = "default", "sleep";
+
+	vmmc-supply = <&vreg_l9c_2p96>;
+	vqmmc-supply = <&vreg_l18b_1p8>;
+	cd-gpios = <&tlmm 91 GPIO_ACTIVE_LOW>;
+
+	status = "okay";
+};
+
+/* Also feeds SPI NAND and PCIe logic, which cannot claim it; mmc drops vqmmc with no card. */
+&vreg_l18b_1p8 {
+	regulator-always-on;
+};
+
+&tlmm {
+	sd_cd_state: sd-cd-state {
+		pins = "gpio91";
+		function = "gpio";
+		bias-pull-up;
+	};
+};
+
+/*
+ * On-carrier UFS (U16). VCC stays at the SOM's 2.952V because L7B also feeds the
+ * eMMC; VCCQ/VCCQ2 are unnamed on the carrier so they follow mainline sc7280.
+ */
+&ufs_mem_hc {
+	reset-gpios = <&tlmm 175 GPIO_ACTIVE_LOW>;
+
+	vcc-supply = <&vreg_l7b_2p952>;
+	vcc-max-microamp = <800000>;
+	vccq-supply = <&vreg_l9b_1p2>;
+	vccq-max-microamp = <900000>;
+	vccq2-supply = <&vreg_l9b_1p2>;
+	vccq2-max-microamp = <900000>;
+
+	/* ICE is disabled on this platform (see &ice in the SOM dtsi). */
+	/delete-property/ qcom,ice;
+
+	status = "okay";
+};
+
+&ufs_mem_phy {
+	vdda-phy-supply = <&vreg_l10c_0p88>;
+	vdda-pll-supply = <&vreg_l6b_1p2>;
+	status = "okay";
+};
+
+/*
+ * SPI NAND (U19) is DISABLED. Its pads reach no usable controller - the egpio route
+ * lands on LPI pins with no driver - so the bus must be bit-banged at ~42 KiB/s. The
+ * block probe then takes ~74 s, holding a udev worker past the deferred-probe window
+ * and causing -110 failures on USB, adreno_smmu, cci and cpufreq.
+ *
+ * Re-enable if a respin moves U19 onto the QSPI controller (GPIO12-19, today J26/J29).
+ */
+/*
+&tlmm {
+	spi_nand_state: spi-nand-state {
+		bus-pins {
+			pins = "gpio163", "gpio164", "gpio165", "gpio166";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		hold-pins {
+			pins = "gpio157", "gpio158";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+			output-high;
+		};
+	};
+};
+
+/ {
+	spi_nand_bus: spi {
+		compatible = "spi-gpio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		sck-gpios = <&tlmm 165 GPIO_ACTIVE_HIGH>;
+		mosi-gpios = <&tlmm 163 GPIO_ACTIVE_HIGH>;
+		miso-gpios = <&tlmm 164 GPIO_ACTIVE_HIGH>;
+		cs-gpios = <&tlmm 166 GPIO_ACTIVE_LOW>;
+		num-chipselects = <1>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&spi_nand_state>;
+
+		flash@0 {
+			compatible = "spi-nand";
+			reg = <0>;
+			spi-max-frequency = <20000000>;
+		};
+	};
+};
+*/
+
+&pon_pwrkey {
+	status = "okay";
+};
+
+/*
+ * PCIe1 (x2) -> M.2 A+E socket (J14). Refclk and rails are hardware-sequenced, so no
+ * regulator/clock/endpoint node. W_DISABLE1# (gpio0) is held high via pinctrl so the
+ * radio is enabled before PERST releases; wake-gpios is inert, only gpio80's pull matters.
+ */
+&tlmm {
+	pcie1_reset_n: pcie1-reset-n-state {
+		pins = "gpio81";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-disable;
+	};
+
+	pcie1_wake_n: pcie1-wake-n-state {
+		pins = "gpio80";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	pcie1_wlan_en: pcie1-wlan-en-state {
+		pins = "gpio0";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+};
+
+&pcie1 {
+	perst-gpios = <&tlmm 81 GPIO_ACTIVE_LOW>;
+	wake-gpios = <&tlmm 80 GPIO_ACTIVE_HIGH>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pcie1_reset_n>, <&pcie1_wake_n>, <&pcie1_clkreq_n>,
+		    <&pcie1_wlan_en>;
+	status = "okay";
+};
+
+/*
+ * PCIe0 (x1) -> PI7C9X2G304EV switch -> 2x RTL8111K. No WAKE: the downstream WAKE#
+ * nets are per-NIC PME, not the link wake.
+ */
+&tlmm {
+	pcie0_reset_n: pcie0-reset-n-state {
+		pins = "gpio86";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-disable;
+	};
+};
+
+/*
+ * Camera itself comes from a CAMERA_STACK overlay; this is the connector map the
+ * overlays are written against. All five CSI ports share one 4-lane pinout:
+ *
+ *   port conn  MCLK  I2C bus            RST STBY START FSIN STROBE RDY ADP
+ *   CSI0 J20   64    cci0_i2c0 (69/70)  113 112  109   104  116    111 101
+ *   CSI1 J21   65    cci0_i2c1 (71/72)   11  27   25     9    8     24  26
+ *   CSI2 J22   66    cci1_i2c0 (73/74)   77  85  129   115  121    123 127
+ *   CSI3 J23   67    cci1_i2c1 (75/76)   28  29    1    31    2     30   3
+ *   CSI4 J25   68    i2c-gpio (161/162)  59  10   55    58   37     47  54
+ *
+ * CSI4 needs a bit-banged bus: GPIO161/162 have no CCI or QUP function.
+ */
+
+&tlmm {
+	disp0_ctrl_state: disp0-ctrl-state {
+		pins = "gpio61", "gpio39";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+
+	/* Nothing references these two; they just park the remaining DISP0 pins. */
+	disp0_misc_state: disp0-misc-state {
+		pins = "gpio96", "gpio38";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	disp0_status_state: disp0-status-state {
+		pins = "gpio105", "gpio36";
+		function = "gpio";
+		bias-pull-up;
+	};
+};
