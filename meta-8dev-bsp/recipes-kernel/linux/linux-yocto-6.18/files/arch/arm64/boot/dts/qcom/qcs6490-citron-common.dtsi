@@ -84,3 +84,16 @@
 &venus {
 	status = "okay";
 };
+
+/*
+ * There is no Type-C connector here, and the qmpphy aux_bridge would make DP defer
+ * forever, costing the DPU its card0. Done here because overlays cannot delete
+ * base properties.
+ */
+&mdss_dp_out {
+	/delete-property/ remote-endpoint;
+};
+
+&usb_dp_qmpphy_dp_in {
+	/delete-property/ remote-endpoint;
+};

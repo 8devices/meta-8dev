@@ -45,3 +45,5 @@ patch patches/media-qcom-camss-bind-sensors-independently.patch
 # Promptless select-only symbols that iris-video-dlkm / kgsl-dlkm need enabled.
 patch patches/qcom-ubwc-config-selectable.patch
 patch patches/interval-tree-selectable.patch
+# CPAS constants qcs6490-camera.dtsi needs; mainline does not carry the header.
+patch patches/dt-bindings-camera-add-msm-camera-header.patch
