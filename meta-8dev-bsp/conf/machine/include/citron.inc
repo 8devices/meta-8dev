@@ -10,16 +10,6 @@ include conf/machine/include/citron-extras.inc
 PREFERRED_PROVIDER_virtual/kernel:citron ?= "linux-yocto"
 PREFERRED_VERSION_linux-yocto:citron ?= "6.18%"
 
-# Accept the "commercial" LICENSE_FLAGS for the patent-encumbered codecs in the
-# citron camera stack (openh264, ffmpeg/libav, x264/plugins-ugly); citron-only.
-LICENSE_FLAGS_ACCEPTED:append = " \
-    commercial_openh264 \
-    commercial_ffmpeg \
-    commercial_gstreamer1.0-libav \
-    commercial_x264 \
-    commercial_gstreamer1.0-plugins-ugly \
-"
-
 MACHINE_ESSENTIAL_EXTRA_RRECOMMENDS:append = " \
     qbootctl \
 "
