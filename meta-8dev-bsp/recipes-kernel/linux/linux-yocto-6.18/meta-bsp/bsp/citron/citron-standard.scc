@@ -35,7 +35,6 @@ include bsp/citron/som.scc
 include cfg/8dev/gpio.scc
 include cfg/8dev/usb-gadget.scc
 include cfg/8dev/usb-classes.scc
-include cfg/8dev/mac80211-debug.scc
 
 # --- Patches ---
 patch patches/pci-qcom-force-synchronous-probe.patch
