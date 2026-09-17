@@ -37,6 +37,10 @@ KERNEL_EXTRA_FEATURES:citron = ""
 # emits; without it boot fails in ufdt_overlay_do_fixups.
 KERNEL_DTC_FLAGS:append:citron = " -@"
 
+# Both kernels need this: the board dts describes the panel unconditionally, so a
+# DSI-less kernel leaves the DPU master unbound and loses /dev/dri/card0 entirely.
+KERNEL_FEATURES:append:citron = " bsp/qcs6490/display.scc"
+
 # Merged into the dtb so every blob is self-contained. Works on the installed
 # blobs, which is what the deploy tasks read.
 merge_camera_dtbo() {

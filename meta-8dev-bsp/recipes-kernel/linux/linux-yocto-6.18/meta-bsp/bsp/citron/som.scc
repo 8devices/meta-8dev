@@ -6,4 +6,5 @@ define KFEATURE_COMPATIBILITY board
 # built in; each board's device tree decides what probes.
 include bsp/citron/ethernet.scc
 include bsp/citron/qcn9274.scc
+include bsp/citron/panel.scc
 include bsp/citron/sensors.scc
