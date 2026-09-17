@@ -1,32 +1,25 @@
 #!/bin/sh
 
-# Directory of drop-in definitions for custom boards and radios. Integrator
-# layers can install a file here named after the key it describes; matching
-# files are sourced after the built-in resolution below and expose their values
-# via uppercase variables (each applied only when set, overriding the built-in
-# result). Supported keys and variables:
+# Drop-in overrides for integrator layers. A file named after the key it
+# describes is sourced after the built-in resolution, and each variable it sets
+# overrides the built-in result:
 #
-#   Boards -- file named after the CDT board id or the device tree compatible:
-#     # /lib/boardinfo.d/0x83000120   (or /lib/boardinfo.d/acme,myboard)
-#     BOARD_NAME=myboard
-#     BOARD_REV=1.0
-#
-#   Radios -- file named after the "svid-sdid" pair:
-#     # /lib/boardinfo.d/0x3844-0x040a
-#     RADIO_TYPE=Custom
-#     RADIO_FEATURES='2-5GHz 2x4'
+#   /lib/boardinfo.d/<cdt board id | dt compatible>  -> BOARD_NAME, BOARD_REV
+#   /lib/boardinfo.d/<svid>-<sdid>                   -> RADIO_TYPE, RADIO_FEATURES
 #
 BOARDINFO_DIR="${BOARDINFO_DIR:-/lib/boardinfo.d}"
 
 get_board_id() {
-	local board rev compat board_base board_id board_cdt
+	local board rev compat board_base board_id board_cdt part
 
-	# Board ID comes from the CDT. When absent (legacy board), fall back to
-	# the board-type default -- QCS405 IOT board id 0x20.
-	if [ -e /dev/disk/by-partlabel/cdt ]; then
-		board_id=$(dd if=/dev/disk/by-partlabel/cdt bs=1 skip=$((0x17)) count=4 2>/dev/null \
+	# Read through sysfs PARTNAME rather than the udev by-partlabel symlink, so
+	# this also works early in boot. Legacy boards have no CDT id and fall back.
+	for part in /sys/class/block/*; do
+		grep -qs '^PARTNAME=cdt$' "$part/uevent" || continue
+		board_id=$(dd if="/dev/${part##*/}" bs=1 skip=$((0x17)) count=4 2>/dev/null \
 			| od -H | awk 'NR==1{print $2}')
-	fi
+		break
+	done
 	if [ -n "$board_id" ]; then
 		board_id="0x$board_id"
 		board_cdt="yes"
@@ -38,14 +31,6 @@ get_board_id() {
 	if [ -f /proc/device-tree/compatible ]; then
 		compat=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -n 1)
 	fi
-
-	# Initial base resolution
-	case "$compat" in
-		"8devices,tobufi")     board_base="tobufi-som" ;;
-		"8devices,tobufi-dvk") board_base="tobufi-dvk" ;;
-		"8devices,robonode")   board_base="robonode"   ;;
-		"8devices,robovision") board_base="robovision" ;;
-	esac
 
 	case "$board_id" in
 		0x80000520) board_base="tobufi-som"; rev="5.0" ;;
@@ -66,17 +51,20 @@ get_board_id() {
 			;;
 	esac
 
-	board="$board_base"
+	case "$compat" in
+		"8devices,tobufi")     board="tobufi"     ;;
+		"8devices,tobufi-dvk") board="tobufi-dvk" ;;
+		"8devices,robonode")   board="robonode"   ;;
+		"8devices,robovision") board="robovision" ;;
+		*)                     board="$compat"    ;;
+	esac
 
-	# Custom boards / overrides: source a drop-in file named after the board
-	# id or the compatible string, if present. It exposes BOARD and REV, which
-	# override the values above. The id-named file is applied last so it wins
-	# over a more generic compatible-named one.
+	# The id-named file is applied last so it wins over a compatible-named one.
 	for key in "$compat" "$board_id"; do
 		[ -n "$key" ] && [ -f "$BOARDINFO_DIR/$key" ] || continue
 		BOARD_NAME="" BOARD_REV=""
 		. "$BOARDINFO_DIR/$key"
-		# Board revision is irrelevant without board name
+		# A revision without a board name means nothing.
 		[ -n "$BOARD_NAME" ] || continue
 		board="$BOARD_NAME" rev="$BOARD_REV"
 	done
@@ -113,9 +101,6 @@ get_radio_id() {
 		*)             type="unknown";  features="unknown"    ;;
 	esac
 
-	# Custom radios / overrides: source a drop-in file named after the
-	# svid-sdid pair, if present. It exposes RADIO_TYPE and RADIO_FEATURES,
-	# which override the values above.
 	key="$svid-$sdid"
 	if [ -n "$svid" ] && [ -n "$sdid" ] && [ -f "$BOARDINFO_DIR/$key" ]; then
 		RADIO_TYPE="" RADIO_FEATURES=""
