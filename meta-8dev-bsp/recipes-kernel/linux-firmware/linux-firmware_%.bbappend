@@ -32,9 +32,6 @@ do_install:append:robovision() {
         ! -name 'rtl8168h-2.fw' -delete
 }
 
-# Disable the Qualcomm artifact-server fetch.
-QCM6490_SRC_URI:robovision = ""
-
 # gptauuid.xml is a GPT partition map, not loadable firmware, and no HLOSFW
 # update package claims it.
 do_install:append:qcom() {

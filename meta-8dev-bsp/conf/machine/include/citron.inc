@@ -24,6 +24,12 @@ MACHINE_ESSENTIAL_EXTRA_RRECOMMENDS:append = " \
     qbootctl \
 "
 
+# QCS6490 SoC firmware: QUP serial engines (I2C/SPI) + Venus codec.
+MACHINE_EXTRA_RRECOMMENDS:append = " \
+    linux-firmware-qcom-qcm6490-qupv3fw \
+    linux-firmware-qcom-vpu \
+"
+
 BAD_RECOMMENDATIONS:append = " \
     kernel-module-wlan-platform \
     kernel-module-qcacld-wlan \
