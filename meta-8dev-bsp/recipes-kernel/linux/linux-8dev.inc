@@ -23,9 +23,12 @@ KERNEL_FEATURES:append:citron = "\
     cfg/8dev/systemd.scc \
     cfg/8dev/squashfs.scc \
     cfg/8dev/uvc-camera.scc \
-    bsp/qcs6490/camss.scc \
     bsp/qcs6490/venus.scc \
 "
+
+# Set by the selected conf/distro/include/camera-stack-*.inc.
+CAMERA_KERNEL_FEATURE ??= ""
+KERNEL_FEATURES:append:citron = " ${CAMERA_KERNEL_FEATURE}"
 
 # Keeps linux-yocto's default features/netfilter/netfilter.scc out.
 KERNEL_EXTRA_FEATURES:citron = ""
@@ -33,6 +36,20 @@ KERNEL_EXTRA_FEATURES:citron = ""
 # Qualcomm UEFI resolves its platform fixups against the __symbols__ node this
 # emits; without it boot fails in ufdt_overlay_do_fixups.
 KERNEL_DTC_FLAGS:append:citron = " -@"
+
+# Merged into the dtb so every blob is self-contained. Works on the installed
+# blobs, which is what the deploy tasks read.
+merge_camera_dtbo() {
+    for pair in ${CAMERA_DTB_OVERLAYS}; do
+        dtb="${D}/${KERNEL_DTBDEST}/${pair%%:*}.dtb"
+        dtbo="${D}/${KERNEL_DTBDEST}/${pair#*:}.dtbo"
+        if [ ! -f "$dtb" ] || [ ! -f "$dtbo" ]; then
+            bbfatal "merge_camera_dtbo: missing $dtb or $dtbo, check KERNEL_DEVICETREE"
+        fi
+        fdtoverlay -i "$dtb" -o "$dtb.merged" "$dtbo"
+        mv "$dtb.merged" "$dtb"
+    done
+}
 
 # meta-qcom wraps the dtb into dtb-${QCOM_DTB_DEFAULT}-image.vfat in a second
 # sstate task, and two tasks writing one deploy dir is not stable: the
@@ -42,6 +59,9 @@ KERNEL_DTC_FLAGS:append:citron = " -@"
 do_deploy:append:citron() {
     for dtbf in ${KERNEL_DEVICETREE}; do
         dtb=$(normalize_dtb "$dtbf")
+        case "$dtb" in
+            *.dtbo) continue ;;
+        esac
         stem=$(basename $dtb .dtb)
         src="${D}/${KERNEL_DTBDEST}/$(basename $dtb)"
         [ -f "$src" ] || bbfatal "dtb vfat: missing $src"
@@ -57,6 +77,8 @@ python () {
     if 'citron' not in (d.getVar('OVERRIDES') or '').split(':'):
         return
 
+    d.appendVar('DEPENDS', ' dtc-native')
+    d.appendVarFlag('do_install', 'postfuncs', ' merge_camera_dtbo')
     d.appendVarFlag('do_deploy', 'depends',
                     ' dosfstools-native:do_populate_sysroot mtools-native:do_populate_sysroot')
 
