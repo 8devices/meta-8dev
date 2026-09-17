@@ -10,5 +10,5 @@ do_install:append:8dev-basic() {
         ${D}${sysconfdir}/systemd/system/android-tools-adbd.service.d/volatile-session.conf
 }
 
-FILES:${PN}-adbd:append:8dev-basic = "${sysconfdir}/systemd/system/android-tools-adbd.service.d/env-home.conf"
+FILES:${PN}-adbd:append:8dev-basic = " ${sysconfdir}/systemd/system/android-tools-adbd.service.d/env-home.conf"
 FILES:${PN}-adbd:append:8dev-basic = " ${sysconfdir}/systemd/system/android-tools-adbd.service.d/volatile-session.conf"
