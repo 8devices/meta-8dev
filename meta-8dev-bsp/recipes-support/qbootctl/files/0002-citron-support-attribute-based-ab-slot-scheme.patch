@@ -63,9 +63,26 @@ to the board's simplified, attribute-only A/B scheme:
   set-active permanently unusable here); it does not change behaviour once a
   slot is already active. Also fixes the missing newline on the old message.
 
+* set-active type GUID follows the active slot: route the "active" type GUID to
+  the slot being activated (and the "inactive" GUID to the other), restoring the
+  legacy C++ behaviour. The upstream C rewrite regressed this - it pinned
+  active_guid to physical partition A and inactive_guid to B and let only the
+  attribute flag track the target slot, so activating slot B left efi_b with the
+  inactive (non-ESP) type GUID and the firmware could not boot it. With this the
+  bootable/ESP type GUID always migrates onto the active slot's efi/dtb/system
+  partition, exactly as the old tool (and the partition layout) assume.
+
 * Demote "Couldn't find cmdline arg" to the debug log: it is expected here
   (no slot_suffix) and handled by the fallback, so it shouldn't spam normal
   output.
+
+* Kernel cmdline parsing (get_kernel_cmdline_arg): honor the LAST occurrence of
+  a repeated argument, matching the kernel, so root= resolves to the value the
+  bootloader appends rather than the UKI's baked-in default (both are present
+  here: "root=PARTLABEL=system_a ... root=PARTLABEL=system_<active>"). Also
+  null-terminate the read buffer and stop the value copy at end-of-cmdline - the
+  appended root= is the last token and has no trailing space, which the old
+  first-match, space-only-terminated copy could not read correctly.
 
 Ported to qbootctl 0.2.2 (upstream C rewrite; the original was against the
 earlier C++ tree - .cpp files, vector<string> part lists and a bootctrl_test
@@ -91,12 +108,30 @@ index fcbd807..f72eb4f 100644
  
  extern const struct boot_control_module bootctl;
 diff --git a/bootctrl_impl.c b/bootctrl_impl.c
-index 5586f72..4c37bbd 100644
+index 5586f72..f6b3773 100644
 --- a/bootctrl_impl.c
 +++ b/bootctrl_impl.c
-@@ -104,7 +104,9 @@ void get_kernel_cmdline_arg(const char *arg, char *buf, const char *def)
+@@ -94,25 +94,32 @@ void get_kernel_cmdline_arg(const char *arg, char *buf, const char *def)
+ {
+ 	int fd;
+ 	char pcmd[MAX_CMDLINE_SIZE];
+-	char *val, *found, *ptr = buf;
++	char *val, *found = NULL, *ptr = buf;
+ 	fd = open("/proc/cmdline", O_RDONLY);
+-	int rc = read(fd, pcmd, MAX_CMDLINE_SIZE);
++	int rc = read(fd, pcmd, MAX_CMDLINE_SIZE - 1);
+ 	if (rc < 0) {
+ 		fprintf(stderr, "Couldn't open /proc/cmdline: %d (%s)\n", rc, strerror(errno));
+ 		goto error;
+ 	}
  	close(fd);
- 	found = strstr(pcmd, arg);
+-	found = strstr(pcmd, arg);
++	pcmd[rc] = '\0';
++	// Kernel uses the LAST occurrence of a repeated arg (e.g. two root=: the
++	// UKI's baked default plus the one the bootloader appends), so take the
++	// last match, not the first.
++	for (char *p = pcmd; (p = strstr(p, arg)) != NULL; p++)
++		found = p;
  	if (!found || !(val = strstr(found, "="))) {
 -		fprintf(stderr, "Couldn't find cmdline arg: '%s'\n", arg);
 +		/* Not an error: callers fall back to the supplied default (and, for
@@ -105,7 +140,18 @@ index 5586f72..4c37bbd 100644
  		goto error;
  	}
  
-@@ -262,6 +264,46 @@ static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
+ 	val++;
+-	// no this doesn't handle quotes lol
+-	while (*val != ' ') {
++	// Copy the value up to the next separator or the end of the cmdline.
++	while (*val && *val != ' ' && *val != '\n' && *val != '\t')
+ 		*ptr++ = *val++;
+-	}
++	*ptr = '\0';
+ 
+ 	return;
+ 
+@@ -262,6 +269,46 @@ static int update_slot_attribute(struct gpt_disk *disk, unsigned slot,
  	return 0;
  }
  
@@ -152,7 +198,7 @@ index 5586f72..4c37bbd 100644
  /*
   * Returns 0 for no slots, or the number of slots found.
   * Fun semantic note: Having "1" slot (ie just a "boot" partition)
-@@ -274,6 +316,9 @@ unsigned get_number_slots()
+@@ -274,6 +321,9 @@ unsigned get_number_slots()
  	struct dirent *de = NULL;
  	DIR *dir_bootdev = NULL;
  	static int slot_count = 0;
@@ -162,7 +208,7 @@ index 5586f72..4c37bbd 100644
  
  	// If we've already counted the slots, return the cached value.
  	// If there are no slots then we'll always rerun the search...
-@@ -283,6 +328,14 @@ unsigned get_number_slots()
+@@ -283,6 +333,14 @@ unsigned get_number_slots()
  	assert(AB_SLOT_A_SUFFIX[0] == '_');
  	assert(AB_SLOT_B_SUFFIX[0] == '_');
  
@@ -177,7 +223,7 @@ index 5586f72..4c37bbd 100644
  	dir_bootdev = opendir(BOOTDEV_DIR);
  	// Shouldn't this be an assert?
  	if (!dir_bootdev) {
-@@ -293,8 +346,8 @@ unsigned get_number_slots()
+@@ -293,8 +351,8 @@ unsigned get_number_slots()
  	while ((de = readdir(dir_bootdev))) {
  		if (de->d_name[0] == '.')
  			continue;
@@ -188,7 +234,7 @@ index 5586f72..4c37bbd 100644
  			slot_count++;
  		}
  	}
-@@ -320,18 +373,23 @@ static int boot_control_check_slot_sanity(unsigned slot)
+@@ -320,18 +378,23 @@ static int boot_control_check_slot_sanity(unsigned slot)
  int get_boot_attr(struct gpt_disk *disk, unsigned slot, enum part_attr_type attr)
  {
  	char bootPartition[MAX_GPT_NAME_SIZE + 1] = { 0 };
@@ -214,7 +260,7 @@ index 5586f72..4c37bbd 100644
  {
  	struct gpt_disk disk = { 0 };
  	uint32_t num_slots = get_number_slots();
-@@ -342,26 +400,43 @@ unsigned get_active_boot_slot()
+@@ -342,26 +405,43 @@ unsigned get_active_boot_slot()
  	}
  
  	for (uint32_t i = 0; i < num_slots; i++) {
@@ -264,7 +310,7 @@ index 5586f72..4c37bbd 100644
  	unsigned i = 0;
  	num_slots = get_number_slots();
  	if (num_slots == 0)
-@@ -371,25 +446,26 @@ static int get_current_or_active_slot()
+@@ -371,25 +451,26 @@ static int get_current_or_active_slot()
  		return 0;
  	}
  
@@ -304,7 +350,7 @@ index 5586f72..4c37bbd 100644
  }
  
  int is_slot_bootable(unsigned slot)
-@@ -404,6 +480,16 @@ int is_slot_bootable(unsigned slot)
+@@ -404,6 +485,16 @@ int is_slot_bootable(unsigned slot)
  	return -1;
  }
  
@@ -321,7 +367,7 @@ index 5586f72..4c37bbd 100644
  int mark_boot_successful(unsigned slot)
  {
  	struct gpt_disk disk = { 0 };
-@@ -412,7 +498,7 @@ int mark_boot_successful(unsigned slot)
+@@ -412,7 +503,7 @@ int mark_boot_successful(unsigned slot)
  	int ret = 0;
  
  	if (successful < 0 || unbootable < 0) {
@@ -330,7 +376,7 @@ index 5586f72..4c37bbd 100644
  		ret = -1;
  		goto out;
  	}
-@@ -420,17 +506,17 @@ int mark_boot_successful(unsigned slot)
+@@ -420,17 +511,17 @@ int mark_boot_successful(unsigned slot)
  	if (unbootable) {
  		printf("SLOT %s: was marked unbootable, fixing this"
  		       " (I hope you know what you're doing...)\n",
@@ -351,7 +397,7 @@ index 5586f72..4c37bbd 100644
  		ret = -1;
  		goto out;
  	}
-@@ -535,8 +621,29 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
+@@ -535,8 +626,29 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
  			memcpy((void *)active_guid, (const void *)pentryB, TYPE_GUID_SIZE);
  			memcpy((void *)inactive_guid, (const void *)pentryA, TYPE_GUID_SIZE);
  		} else {
@@ -383,6 +429,41 @@ index 5586f72..4c37bbd 100644
  		}
  		int a_state = slot == 0 ? SLOT_ACTIVE : SLOT_INACTIVE;
  		int b_state = slot == 1 ? SLOT_ACTIVE : SLOT_INACTIVE;
+@@ -548,14 +660,26 @@ static int boot_ctl_set_active_slot_for_partitions(struct gpt_disk *disk,
+ 			return -1;
+ 		}
+ 
+-		// Mark A as active in primary table
+-		UPDATE_SLOT(pentryA, active_guid, a_state);
+-		// Mark A as active in backup table
+-		UPDATE_SLOT(pentryA_bak, active_guid, a_state);
+-		// Mark B as inactive in primary table
+-		UPDATE_SLOT(pentryB, inactive_guid, b_state);
+-		// Mark B as inactive in backup table
+-		UPDATE_SLOT(pentryB_bak, inactive_guid, b_state);
++		/*
++		 * Route the "active" type GUID to the slot being activated (and the
++		 * "inactive" GUID to the other slot), mirroring the legacy C++ tool.
++		 * The bootable/ESP type GUID must live on the ACTIVE slot; upstream
++		 * pinned active_guid to physical partition A and moved only the
++		 * attribute flag, which left the activated slot with the wrong GUID.
++		 */
++		if (slot == 0) {
++			// Slot A active: A takes the active GUID, B the inactive one.
++			UPDATE_SLOT(pentryA, active_guid, a_state);
++			UPDATE_SLOT(pentryA_bak, active_guid, a_state);
++			UPDATE_SLOT(pentryB, inactive_guid, b_state);
++			UPDATE_SLOT(pentryB_bak, inactive_guid, b_state);
++		} else {
++			// Slot B active: B takes the active GUID, A the inactive one.
++			UPDATE_SLOT(pentryB, active_guid, b_state);
++			UPDATE_SLOT(pentryB_bak, active_guid, b_state);
++			UPDATE_SLOT(pentryA, inactive_guid, a_state);
++			UPDATE_SLOT(pentryA_bak, inactive_guid, a_state);
++		}
+ 	}
+ 
+ 	// write updated content to disk
 diff --git a/gpt-utils.c b/gpt-utils.c
 index fe678a3..ffcd8a2 100644
 --- a/gpt-utils.c
