@@ -22,15 +22,14 @@ This layer depends on:
 
 Following MACHINES are supported:
 
-- tobufi-dvk -- TobuFi module based development kit
-- robonode -- TobuFi module based UAV platform
+- robovision -- QCS6490-based Robonode Vision platform
 
 ### Building Image
 
 Start the image by specifying target `MACHINE`:
 
    ```
-   MACHINE="tobufi-dvk" bitbake core-image-base
+   MACHINE="robovision" bitbake core-image-base
    ```
 
 ## Support and Contributing

@@ -1,9 +1,4 @@
-FILESEXTRAPATHS:prepend:tobufi := "${THISDIR}/${PN}:"
 FILESEXTRAPATHS:prepend:citron := "${THISDIR}/${PN}:"
-
-SRC_URI:append:tobufi = " \
-    file://android-gadget-setup.machine \
-"
 
 # FIXME: meta-qcom-hwe ships android-gadget-setup.machine for all QCS6490
 # machines (via SRC_URI:append:qcom). At equal layer priority its
@@ -13,9 +8,3 @@ SRC_URI:append:tobufi = " \
 SRC_URI:append:citron = " \
     file://android-gadget-setup.machine \
 "
-
-do_install:append:tobufi() {
-    if ${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'false', 'true', d)}; then
-        rm -rf ${D}${systemd_unitdir}/system/android-tools-adbd.service.d
-    fi
-}
