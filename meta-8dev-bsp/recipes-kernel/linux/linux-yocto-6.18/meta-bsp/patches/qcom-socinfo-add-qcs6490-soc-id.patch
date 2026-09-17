@@ -1,0 +1,45 @@
+From: Qualcomm upstream backport
+Subject: [PATCH] soc: qcom: socinfo: add SoC ID 498 (QCS6490)
+
+Mainline knows QCM6490 (497) but not QCS6490 (498), which is what this SoM
+reports. socinfo_machine() then returns NULL and /sys/devices/soc0/machine
+falls back to the device-tree model string ("8devices Robonode Vision"
+etc.) instead of the chip name.
+
+That breaks anything keying off the SoC identity. Concretely, Qualcomm's
+userspace-resource-manager selects its per-target policy by lowercasing
+soc0/machine and matching "qcs6490", so on these boards it silently applies
+no tuning at all - while the QLI 2.0 reference, whose kernel carries these
+two commits, applies the qcm6490 policy correctly.
+
+Squashed backport of the two upstream commits, taken verbatim from
+qcom-6.18.y:
+  7d8563688866 dt-bindings: arm: qcom,ids: Add SoC ID for QCS6490
+  2baf0be6a28d soc: qcom: socinfo: Add SoC ID for QCS6490
+
+Upstream-Status: Backport
+
+diff --git a/include/dt-bindings/arm/qcom,ids.h b/include/dt-bindings/arm/qcom,ids.h
+index 19598ed4679e..8776844e0eeb 100644
+--- a/include/dt-bindings/arm/qcom,ids.h
++++ b/include/dt-bindings/arm/qcom,ids.h
+@@ -240,6 +240,7 @@
+ #define QCOM_ID_SC7280			487
+ #define QCOM_ID_SC7180P			495
+ #define QCOM_ID_QCM6490			497
++#define QCOM_ID_QCS6490			498
+ #define QCOM_ID_SM7325P			499
+ #define QCOM_ID_IPQ5000			503
+ #define QCOM_ID_IPQ0509			504
+diff --git a/drivers/soc/qcom/socinfo.c b/drivers/soc/qcom/socinfo.c
+index a2e2e15b840c..704235ad9ccf 100644
+--- a/drivers/soc/qcom/socinfo.c
++++ b/drivers/soc/qcom/socinfo.c
+@@ -415,6 +415,7 @@ static const struct soc_id soc_id[] = {
+ 	{ qcom_board_id(SC7280) },
+ 	{ qcom_board_id(SC7180P) },
+ 	{ qcom_board_id(QCM6490) },
++	{ qcom_board_id(QCS6490) },
+ 	{ qcom_board_id(SM7325P) },
+ 	{ qcom_board_id(IPQ5000) },
+ 	{ qcom_board_id(IPQ0509) },

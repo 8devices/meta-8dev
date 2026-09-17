@@ -41,6 +41,7 @@ include cfg/8dev/usb-classes.scc
 # --- Patches ---
 # All in one place: linux-8dev carries the same set in git and includes this file
 # with nopatch. Feature-specific ones are harmless without their feature.
+patch patches/qcom-socinfo-add-qcs6490-soc-id.patch
 patch patches/pci-qcom-force-synchronous-probe.patch
 patch patches/qcom-scm-reboot-edl-enters-download-mode.patch
 patch patches/media-qcom-camss-bind-sensors-independently.patch
