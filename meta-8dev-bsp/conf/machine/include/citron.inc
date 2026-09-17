@@ -7,6 +7,7 @@ PREFERRED_VERSION_linux-yocto:citron ?= "6.18%"
 
 MACHINE_ESSENTIAL_EXTRA_RRECOMMENDS:append = " \
     qbootctl \
+    tlvstore \
 "
 
 # QCS6490 SoC firmware: QUP serial engines (I2C/SPI) + Venus codec.
