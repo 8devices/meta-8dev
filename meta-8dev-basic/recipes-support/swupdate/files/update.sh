@@ -1,5 +1,4 @@
 #!/bin/sh
-# Launch swupdate-progress together with swupdate-client
 
 cleanup() {
 	[ -n "$PROG_PID" ] || return

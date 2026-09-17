@@ -1,5 +1,5 @@
-# A bbappend's own dir is not on FILESPATH by default, so the local patch below
-# would be "could not be found" at parse (incl. native/nativesdk variants).
+# A bbappend's own dir is not on FILESPATH, so the patch below would not be found
+# at parse time (native/nativesdk variants included).
 FILESEXTRAPATHS:prepend := "${THISDIR}/${BPN}:"
 
 SRC_URI = " \

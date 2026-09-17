@@ -19,15 +19,14 @@ do_install:append:citron() {
     install -m 0644 ${UNPACKDIR}/QCN9274/m3.bin \
         ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/m3.bin
 
+    # An uncalibrated radio makes the driver error out without this.
     install -m 0644 ${UNPACKDIR}/QCN9274/caldata_4.bin \
         ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/caldata.bin
 }
 
-# Cleanup preinstalled files.
 do_install:append:citron() {
     rm -f ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/firmware-2.bin
-    # Both on-board NICs are RTL8168H/8111H and load only rtl8168h-2.fw; drop the
-    # other rtl8168 variant blobs.
+    # Both on-carrier NICs load only rtl8168h-2.fw.
     find ${D}${nonarch_base_libdir}/firmware/rtl_nic -name 'rtl8168*.fw' \
         ! -name 'rtl8168h-2.fw' -delete
 
@@ -40,8 +39,7 @@ do_install:append:citron() {
     rm -rf ${D}${nonarch_base_libdir}/firmware/qcom/vpu-1.0
 }
 
-# gptauuid.xml is a GPT partition map, not loadable firmware, and no HLOSFW
-# update package claims it.
+# A GPT partition map, not loadable firmware, and no HLOSFW package claims it.
 do_install:append:citron() {
     find ${D} -name gptauuid.xml -delete
 }

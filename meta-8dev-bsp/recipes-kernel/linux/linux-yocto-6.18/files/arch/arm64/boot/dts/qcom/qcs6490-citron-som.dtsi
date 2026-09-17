@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 /*
- * 8devices Citron SOM - baseline device tree. Describes only what is on the SOM
- * and required to boot: QCS6490 SoC, the PM7325/PM8350C/PMK8350 PMICs and rails,
- * the DDR/firmware memory map, protected clocks, eMMC, debug UARTs and USB.
- * Everything else is left at the sc7280.dtsi defaults (disabled) for the carrier
- * board to enable.
+ * Citron SOM baseline: only what is on the module and needed to boot. Everything
+ * else stays at the sc7280.dtsi defaults for the carrier board to enable.
  */
 
 #include <dt-bindings/iio/qcom,spmi-adc7-pm7325.h>
@@ -17,12 +14,10 @@
 #include "pmk8350.dtsi"
 
 /*
- * Re-base firmware/subsystem carveouts the Citron boot firmware places
- * differently from the sc7280 defaults: deleted here and re-defined below at the
- * Citron address, same label so consumers still resolve.
- * rmtfs_mem is deleted but not re-defined (modem disabled, unreferenced) to
- * reclaim its region as RAM. wlan_ce_mem is left as-is - the disabled WLAN node
- * still references it, so deleting it would dangle a phandle.
+ * The Citron boot firmware places these carveouts elsewhere than sc7280 does, so
+ * re-base them below under the same labels. rmtfs_mem is not re-defined - the modem
+ * is off, so its region becomes RAM. wlan_ce_mem stays: the disabled WLAN node
+ * still references it and deleting it would dangle a phandle.
  */
 /delete-node/ &ipa_fw_mem;
 /delete-node/ &rmtfs_mem;
@@ -483,11 +478,8 @@
 };
 
 /*
- * PCIe PHYs - on-module SoC blocks on on-module PMIC rails, enabled here. The
- * controllers (&pcie0/&pcie1) stay disabled: each needs the carrier's PERST GPIO
- * and a downstream endpoint, and enabling one without those hangs the bus at
- * probe. A PHY is inert until a carrier enables its controller, so enabling both
- * is harmless. Both share the same vdda-phy/vdda-pll rails.
+ * PHYs only. A controller needs the carrier's PERST GPIO and an endpoint, and hangs
+ * at probe without them; a PHY is inert until its controller is enabled.
  */
 &pcie0_phy {
 	vdda-phy-supply = <&vreg_l10c_0p88>;
@@ -507,10 +499,8 @@
 };
 
 /*
- * The inline crypto engine (sc7280 crypto@1d88000) is owned by the secure side
- * on this platform; reading its registers from the Linux VM triggers an
- * asynchronous SError in qcom_ice_create during probe (kernel panic). Disable
- * it - the eMMC below does not use inline hardware crypto (qcom,ice deleted).
+ * The secure side owns the inline crypto engine here: reading its registers from
+ * the Linux VM panics with an async SError in qcom_ice_create.
  */
 &ice {
 	status = "disabled";
@@ -529,7 +519,7 @@
 	no-sd;
 	supports-cqe;
 
-	/* ICE is disabled (see &ice above) - don't reference it. */
+	/* ICE is disabled above. */
 	/delete-property/ qcom,ice;
 
 	status = "okay";
@@ -587,11 +577,9 @@
 
 &tlmm {
 	/*
-	 * GPIOs owned by firmware - the HLOS must not touch them or pinctrl-msm hangs
-	 * at gpiochip bringup. Must match the XBL/TZ GPIO-ownership config.
-	 * Only the ADSP pins (32-33) are reserved; gpio48-51 are left free for uart12,
-	 * which REQUIRES a matching XBL/TZ change releasing them - without it the board
-	 * hangs at gpiochip bringup.
+	 * Must match the XBL/TZ GPIO-ownership config: touching a firmware-owned pin
+	 * hangs pinctrl-msm at gpiochip bringup. gpio48-51 are left free for uart12,
+	 * which depends on the matching XBL/TZ release.
 	 */
 	gpio-reserved-ranges = <32 2>;	/* ADSP (gpio48-51 freed for uart12 - needs XBL release) */
 };
@@ -600,19 +588,14 @@
 	status = "okay";
 };
 
-/*
- * uart7 (QUP0 SE7, GPIO28-31) left disabled: the carrier repurposes those pins,
- * so the SOM must not claim them for a UART.
- */
+/* Left disabled: the carrier repurposes GPIO28-31. */
 &uart7 {
 	status = "disabled";
 };
 
 /*
- * USB1 (usb_1) - SuperSpeed controller + HS and USB3/DP combo PHYs, on-module
- * SoC blocks on on-module rails, enabled here. The data role, Type-C and VBUS
- * switching are carrier wiring. orientation-switch is left at the sc7280 default
- * for the carrier to keep or delete.
+ * Controller and PHYs only. Data role, Type-C and VBUS switching are carrier
+ * wiring, and orientation-switch is left at the sc7280 default for it to decide.
  */
 &usb_1 {
 	status = "okay";
@@ -631,12 +614,7 @@
 	status = "okay";
 };
 
-/*
- * aDSP and cDSP remote processors - disabled. Headless networking board: no
- * audio (aDSP) and no NPU/compute offload (cDSP). The rest of the DSP stack
- * (remoteproc, pd-mapper, fastrpc, adsp/cdsp.mbn) is removed in minimize.cfg and
- * the firmware/image config. Modem and WLAN remoteprocs were already disabled.
- */
+/* Headless board: no audio and no compute offload, so neither DSP is used. */
 &remoteproc_adsp {
 	status = "disabled";
 };
@@ -645,10 +623,7 @@
 	status = "disabled";
 };
 
-/*
- * Disable on-die multimedia (MDSS display, Adreno GPU + GMU): headless board,
- * their kernel drivers (DRM/MSM) are removed, so the nodes would be driverless.
- */
+/* Headless board: the DRM/MSM drivers are not built, so these would be driverless. */
 &mdss {
 	status = "disabled";
 };
@@ -662,10 +637,9 @@
 };
 
 /*
- * Disable the GPU/display/camera/video clock controllers and GPU SMMU. Their
- * drivers are off (minimize.cfg) but the nodes are enabled-by-default in
- * sc7280.dtsi; left driverless they block gcc-sc7280 sync_state() and time out
- * the adreno SMMU probe (-110). Their only consumers are already disabled.
+ * These are enabled by default in sc7280.dtsi but have no driver here. Left
+ * driverless they block gcc-sc7280 sync_state() and time out the adreno SMMU
+ * probe with -110.
  */
 &gpucc {
 	status = "disabled";
@@ -687,11 +661,7 @@
 	status = "disabled";
 };
 
-/*
- * LPASS audio clock controllers - no audio on this board. Their consumers (codec
- * macros + DAIs) are already disabled in sc7280.dtsi, so disabling these
- * providers completes the audio teardown.
- */
+/* No audio on this board; their consumers are already disabled in sc7280.dtsi. */
 &lpasscc {
 	status = "disabled";
 };
@@ -712,21 +682,12 @@
 	status = "disabled";
 };
 
-/*
- * RTC inside the PMK8350 PMIC (on SPMI) - SOM PMIC, no carrier wiring, enabled
- * here. Note it only keeps time while the PMIC is powered (VPH_PWR); without a
- * backup supply the wall clock won't persist across full power-off.
- */
+/* Keeps time only while VPH_PWR is up: no backup cell, so it resets on power-off. */
 &pmk8350_rtc {
 	status = "okay";
 };
 
-/*
- * PMIC ADC (PMK8350 ADC7 master, muxing PMK8350 + PM7325 AMUX inputs). Needs at
- * least one channel or it probes -EINVAL. Channels: two board thermistors (TDK
- * NTCG064EF104FT 100k, stock _100K_PU curve) on PM7325 THM1/THM3, plus the two
- * PMIC die-temp channels.
- */
+/* Needs at least one channel or it probes -EINVAL. */
 &pmk8350_vadc {
 	channel@3 {
 		reg = <PMK8350_ADC7_DIE_TEMP>;
@@ -758,9 +719,8 @@
 };
 
 /*
- * ADC thermal monitor - registers the two board thermistors as thermal sensors
- * so thermal zones can consume them. Makes them readable; automatic throttling
- * still needs a thermal-zone with trips + cooling-maps.
+ * Registers the board thermistors as thermal sensors so they are readable;
+ * throttling would still need a thermal-zone with trips and cooling-maps.
  */
 &pmk8350_adc_tm {
 	status = "okay";

@@ -1,5 +1,4 @@
-# Hardcode linux-yocto path to ensure correct directory is
-# extended when including it from different named recipes.
+# Hardcoded so differently-named recipes including this all extend the same dir.
 FILESEXTRAPATHS:prepend:citron := "${THISDIR}/linux-yocto-6.18:"
 
 SRC_URI:append:citron = "\
