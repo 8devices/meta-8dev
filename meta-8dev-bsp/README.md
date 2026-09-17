@@ -22,14 +22,15 @@ This layer depends on:
 
 Following MACHINES are supported:
 
-- robovision -- QCS6490-based Robonode Vision platform
+- citron -- QCS6490-based Citron SOM; one multi-DTB image for every Citron
+  carrier (Robonode Vision, Citron DVK, bare SOM)
 
 ### Building Image
 
 Start the image by specifying target `MACHINE`:
 
    ```
-   MACHINE="robovision" bitbake core-image-base
+   MACHINE="citron" bitbake core-image-base
    ```
 
 ## Support and Contributing

@@ -1,9 +1,4 @@
-# Qualcomm include files form a non-conventional MACHINEOVERRIDES
-# order, which makes Qualcomm BSP overrides to take a precedence
-# over our prepended SOM override. Thus, we must prepend override
-# before including qcom SOM include file.
-MACHINEOVERRIDES =. "citron:"
-
+# MACHINEOVERRIDES already carries citron; the include only prepends qcom/qcm6490.
 require conf/machine/include/qcom-qcs6490.inc
 include conf/machine/include/citron-extras.inc
 
