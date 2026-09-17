@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Justinas Grauslis <justinas@8devices.com>
+Date: Fri, 28 Aug 2026 12:00:00 +0300
+Subject: [PATCH] fix commit of an uninitialised gpt_disk
+
+update_slot_attribute() opens each partition's disk lazily, and flushes the
+disk it already holds when the next partition turns out to live on a different
+one. On the first iteration there is no disk held yet: the struct is still the
+zeroed one from the caller, partition_is_for_disk() compares against an empty
+devpath and returns false, and the code commits a disk that was never read.
+gpt_disk_commit() rejects it:
+
+  gpt_disk_commit: Invalid args
+  update_slot_attribute: Failed to commit disk
+  SLOT a: Failed to set as unbootable
+
+Whether this is reached depends only on what the caller happened to do first.
+mark_boot_successful() and set_active_boot_slot() read attributes before they
+write, and those reads initialise the struct, so they work. set_slot_as_
+unbootable() goes straight to update_slot_attribute() with a zeroed struct, so
+qbootctl -u can never succeed.
+
+Skip the flush when no disk is held yet. "Nothing to commit" is the normal
+state of the first iteration, not a failure, and gpt-utils already exports
+gpt_disk_is_valid() for the test.
+
+Upstream-Status: Pending
+---
+ bootctrl_impl.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/bootctrl_impl.c b/bootctrl_impl.c
+--- a/bootctrl_impl.c
++++ b/bootctrl_impl.c
+@@ -212,8 +212,10 @@
+ 		LOGD("%s: partName = '%s'\n", __func__, partName);
+ 
+ 		// If the current partition is for a different disk (e.g. /dev/sde when the current disk is /dev/sda)
+-		// Then commit the current disk
+-		if (!partition_is_for_disk(disk, partName, devpath, sizeof(devpath))) {
++		// Then commit the current disk. Nothing is held on the first
++		// iteration, and committing a disk that was never read fails.
++		if (gpt_disk_is_valid(disk) &&
++		    !partition_is_for_disk(disk, partName, devpath, sizeof(devpath))) {
+ 			if (gpt_disk_commit(disk)) {
+ 				fprintf(stderr, "%s: Failed to commit disk\n", __func__);
+ 				return -1;
