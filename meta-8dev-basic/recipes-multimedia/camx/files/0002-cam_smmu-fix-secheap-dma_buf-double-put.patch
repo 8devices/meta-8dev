@@ -1,0 +1,47 @@
+From: Justinas Grauslis <justinas@8devices.com>
+Subject: [PATCH] cam_smmu: fix sec-heap dma_buf double put
+
+cam_smmu_reserve_sec_heap() attaches the passed-in dma_buf with
+dma_buf_attach(), which does not take a reference on the buffer. Yet both
+its own error path (err_put) and cam_smmu_release_sec_heap() call
+dma_buf_put() on it. The only real reference is the one created by
+cam_mem_util_get_dma_buf() in cam_mem_mgr_reserve_memory_region(), which
+cam_mem_util_unmap() already puts.
+
+So at teardown the sec-heap buffer is put twice for a single reference:
+once in cam_smmu_release_sec_heap() and once in cam_mem_util_unmap(). On a
+mainline kernel the second put hits the file_ref underflow guard:
+
+  imbalanced put on file reference count
+  WARNING at fs/file.c __file_ref_put_badval
+   dma_buf_put
+   cam_mem_util_unmap [camera_qcm6490]
+   cam_mem_mgr_free_memory_region [camera_qcm6490]
+   cam_icp_free_hfi_mem [camera_qcm6490]
+   cam_icp_mgr_hw_close [camera_qcm6490]
+
+It is reached on every ICP hw close (reboot, or cam-server being killed /
+crashing), and leaks the sec-heap buffer since file_ref then saturates
+instead of releasing.
+
+Hold a reference for the lifetime of the attachment so the existing puts
+in the error path and in the release helper are balanced.
+
+Upstream-Status: Inappropriate [adapts downstream camx-dlkm to a mainline kernel]
+
+---
+ camera_kt/drivers/cam_smmu/cam_smmu_api.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/camera_kt/drivers/cam_smmu/cam_smmu_api.c b/camera_kt/drivers/cam_smmu/cam_smmu_api.c
+--- a/camera_kt/drivers/cam_smmu/cam_smmu_api.c
++++ b/camera_kt/drivers/cam_smmu/cam_smmu_api.c
+@@ -1864,6 +1864,8 @@ int cam_smmu_reserve_sec_heap(int32_t smmu_hdl,
+
+ 	secheap_buf = &iommu_cb_set.cb_info[idx].secheap_buf;
+ 	secheap_buf->buf = buf;
++	/* attach takes no ref; hold one so err_put/release dma_buf_put is balanced */
++	get_dma_buf(secheap_buf->buf);
+ 	secheap_buf->attach = dma_buf_attach(secheap_buf->buf,
+ 		iommu_cb_set.cb_info[idx].dev);
+ 	if (IS_ERR_OR_NULL(secheap_buf->attach)) {

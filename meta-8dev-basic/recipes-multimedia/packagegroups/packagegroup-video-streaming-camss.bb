@@ -14,16 +14,7 @@ inherit packagegroup features_check
 REQUIRED_DISTRO_FEATURES = "camss"
 
 RDEPENDS:${PN} = "\
-    gstreamer1.0 \
-    gstreamer1.0-plugins-base \
-    gstreamer1.0-plugins-good \
-    gstreamer1.0-plugins-bad \
-    gstreamer1.0-plugins-bad-openh264 \
-    gstreamer1.0-libav \
-    ffmpeg \
-    gstreamer1.0-rtsp-server \
-    gstreamer1.0-rtsp-server-apps \
-    gstreamer1.0-plugins-ugly-x264 \
+    packagegroup-video-streaming-common \
     v4l-utils \
     media-ctl \
     libcamera \
