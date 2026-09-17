@@ -9,3 +9,6 @@ include bsp/citron/ethernet.scc
 include bsp/citron/qcn9274.scc
 include bsp/citron/panel.scc
 include bsp/citron/sensors.scc
+include bsp/citron/spi-nand.scc
+include bsp/citron/i2c-gpio.scc
+include bsp/citron/pwrkey.scc

@@ -34,6 +34,7 @@ include bsp/citron/som.scc
 # --- Hardware-agnostic policy ---
 include cfg/8dev/gpio.scc
 include cfg/8dev/leds-gpio.scc
+include cfg/8dev/ubifs.scc
 include cfg/8dev/usb-gadget.scc
 include cfg/8dev/usb-classes.scc
 
