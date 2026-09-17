@@ -1,13 +1,15 @@
 [Unit]
 Description=hostapd on VAP %i
 Conflicts=wpa_supplicant@%i.service
+# Every instance uses bridge=br0, so the device has to exist first.
+Wants=sys-subsystem-net-devices-br0.device
+After=sys-subsystem-net-devices-br0.device systemd-networkd.service
 
 [Service]
 Restart=on-failure
 RestartSec=5
-# XXX: delay hostapd service startup to avoid workaround driver
-# VAP init and service races. Without delay VAP init fails and
-# stays in no carrier state until hostapd is restarted
+# XXX: without the delay VAP init races the driver and the interface stays in
+# no-carrier until hostapd is restarted.
 ExecStartPre=-sleep 1
 ExecStart=hostapd -P /run/hostapd-%i.pid /etc/hostapd/%i.conf
 
