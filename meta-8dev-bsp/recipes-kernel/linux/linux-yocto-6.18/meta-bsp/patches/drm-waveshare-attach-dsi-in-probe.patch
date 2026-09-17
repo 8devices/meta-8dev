@@ -1,0 +1,76 @@
+From 3333333333333333333333333333333333333333 Mon Sep 17 00:00:00 2001
+From: Justinas Grauslis <justinas@8devices.com>
+Date: Wed, 5 Aug 2026 12:00:00 +0300
+Subject: [PATCH] drm/bridge: waveshare: attach the DSI peripheral from probe
+
+The driver registers and attaches its MIPI-DSI peripheral from
+.bridge_attach, which only works for DSI hosts that expose themselves as a
+plain drm_bridge (samsung-dsim, the platform it was written for).
+
+On msm the DSI host joins the DRM device through the component framework and
+only calls component_add() from its mipi_dsi_host .attach callback, so
+attaching from .bridge_attach deadlocks: the component master waits for the
+DSI component, which waits for the master to bind and attach this bridge.
+The display never comes up and the DPU keeps deferring. Every other DSI
+bridge used on msm (ti-sn65dsi86, lontium-lt9611uxc, ...) attaches its DSI
+peripheral from probe for this reason.
+
+Move the attach to the end of probe, after the drm_bridge is registered, so
+the host can bind the bridge as soon as the peripheral attaches.
+
+While here, check the first I2C write: the bridge board is part of the panel
+assembly, so a NAK means no panel is plugged into the DSI connector. Bailing
+out with -ENODEV leaves the DSI host unattached instead of streaming video
+into a disconnected connector, which keeps a board that boots without a panel
+behaving exactly as it did before the panel was described in DT.
+
+Signed-off-by: Justinas Grauslis <justinas@8devices.com>
+
+Upstream-Status: Pending
+---
+ drivers/gpu/drm/bridge/waveshare-dsi.c | 19 +++++++++++++++----
+ 1 file changed, 12 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/waveshare-dsi.c b/drivers/gpu/drm/bridge/waveshare-dsi.c
+--- a/drivers/gpu/drm/bridge/waveshare-dsi.c
++++ b/drivers/gpu/drm/bridge/waveshare-dsi.c
+@@ -80,11 +80,6 @@
+ 				   enum drm_bridge_attach_flags flags)
+ {
+ 	struct ws_bridge *ws = bridge_to_ws_bridge(bridge);
+-	int ret;
+-
+-	ret = ws_bridge_attach_dsi(ws);
+-	if (ret)
+-		return ret;
+
+ 	return drm_bridge_attach(encoder, ws->next_bridge,
+ 				 &ws->bridge, flags);
+@@ -171,7 +166,10 @@
+ 		return ret;
+ 	}
+
+-	regmap_write(ws->reg_map, 0xc0, 0x01);
++	ret = regmap_write(ws->reg_map, 0xc0, 0x01);
++	if (ret)
++		return dev_err_probe(dev, -ENODEV, "no bridge board on the connector\n");
++
+ 	regmap_write(ws->reg_map, 0xc2, 0x01);
+ 	regmap_write(ws->reg_map, 0xac, 0x01);
+
+@@ -179,7 +177,14 @@
+ 	ws->bridge.of_node = dev->of_node;
+ 	devm_drm_bridge_add(dev, &ws->bridge);
+
+-	return 0;
++	/*
++	 * Attach the DSI peripheral here and not from bridge_attach: a DSI host that
++	 * joins its DRM device through the component framework (msm) only registers
++	 * its component once a peripheral attaches, so attaching from bridge_attach
++	 * cannot work - the component master would be waiting for the DSI component
++	 * that is waiting for the master to attach this bridge.
++	 */
++	return ws_bridge_attach_dsi(ws);
+ }
+
+ static const struct of_device_id ws_bridge_of_ids[] = {

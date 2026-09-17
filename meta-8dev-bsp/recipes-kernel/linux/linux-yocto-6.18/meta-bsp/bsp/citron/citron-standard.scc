@@ -42,6 +42,9 @@ include cfg/8dev/usb-classes.scc
 patch patches/pci-qcom-force-synchronous-probe.patch
 patch patches/qcom-scm-reboot-edl-enters-download-mode.patch
 patch patches/media-qcom-camss-bind-sensors-independently.patch
+# The waveshare bridge attaches its DSI peripheral from bridge_attach, which never
+# completes on msm (component-framework DSI host).
+patch patches/drm-waveshare-attach-dsi-in-probe.patch
 # Promptless select-only symbols that iris-video-dlkm / kgsl-dlkm need enabled.
 patch patches/qcom-ubwc-config-selectable.patch
 patch patches/interval-tree-selectable.patch
