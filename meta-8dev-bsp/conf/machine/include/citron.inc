@@ -22,6 +22,15 @@ MACHINE_EXTRA_RRECOMMENDS:append = " \
     kernel-module-uvcvideo \
 "
 
+# urm owns the runtime tuning the camera pipeline depends on (cpusets, THP, uclamp,
+# IRQ affinity). -extensions owns /etc/urm/target, without which no qcm6490 policy
+# runs; urm reads its target from /sys/devices/soc0/machine, hence
+# patches/qcom-socinfo-add-qcs6490-soc-id.patch.
+MACHINE_EXTRA_RRECOMMENDS:append = " \
+    userspace-resource-manager \
+    userspace-resource-manager-extensions \
+"
+
 BAD_RECOMMENDATIONS:append = " \
     kernel-module-wlan-platform \
     kernel-module-qcacld-wlan \
