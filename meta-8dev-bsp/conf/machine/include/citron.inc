@@ -10,11 +10,6 @@ include conf/machine/include/citron-extras.inc
 PREFERRED_PROVIDER_virtual/kernel:citron ?= "linux-yocto"
 PREFERRED_VERSION_linux-yocto:citron ?= "6.18%"
 
-# Use libcamera 0.7.1 (meta-8dev-basic) over the meta-multimedia 0.4.0 default,
-# for its colour-temperature AWB + CCM soft ISP. The recipe sets
-# DEFAULT_PREFERENCE="-1", so this override selects it.
-PREFERRED_VERSION_libcamera:citron = "0.7.1"
-
 # Accept the "commercial" LICENSE_FLAGS for the patent-encumbered codecs in the
 # citron camera stack (openh264, ffmpeg/libav, x264/plugins-ugly); citron-only.
 LICENSE_FLAGS_ACCEPTED:append = " \
