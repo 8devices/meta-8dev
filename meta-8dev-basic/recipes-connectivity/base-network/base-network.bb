@@ -20,27 +20,27 @@ SRC_URI:append:robovision = "\
     file://10-wait-bridge.conf \
 "
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
 do_install() {
     # systemd-networkd: br0 owns DHCP; every eth*/wlan* is a bridge port. The
     # 10- prefix sorts ahead of the stock 80-wired.network so eth* join br0
     # instead of getting their own DHCP.
     install -d ${D}${sysconfdir}/systemd/network
-    install -m 0644 ${WORKDIR}/10-br0.netdev           ${D}${sysconfdir}/systemd/network/
-    install -m 0644 ${WORKDIR}/10-br0.network          ${D}${sysconfdir}/systemd/network/
-    install -m 0644 ${WORKDIR}/10-bridge-ports.network ${D}${sysconfdir}/systemd/network/
+    install -m 0644 ${UNPACKDIR}/10-br0.netdev           ${D}${sysconfdir}/systemd/network/
+    install -m 0644 ${UNPACKDIR}/10-br0.network          ${D}${sysconfdir}/systemd/network/
+    install -m 0644 ${UNPACKDIR}/10-bridge-ports.network ${D}${sysconfdir}/systemd/network/
 }
 
 do_install:append:robovision() {
     # Per-radio AP configs (hostapd@wlanN reads /etc/hostapd/wlanN.conf).
     install -d ${D}${sysconfdir}/hostapd
-    install -m 0644 ${WORKDIR}/hostapd-wlan0.conf ${D}${sysconfdir}/hostapd/wlan0.conf
-    install -m 0644 ${WORKDIR}/hostapd-wlan1.conf ${D}${sysconfdir}/hostapd/wlan1.conf
+    install -m 0644 ${UNPACKDIR}/hostapd-wlan0.conf ${D}${sysconfdir}/hostapd/wlan0.conf
+    install -m 0644 ${UNPACKDIR}/hostapd-wlan1.conf ${D}${sysconfdir}/hostapd/wlan1.conf
 
     # Make every hostapd@ instance wait for br0 (drop-in on the template).
     install -d ${D}${systemd_system_unitdir}/hostapd@.service.d
-    install -m 0644 ${WORKDIR}/10-wait-bridge.conf ${D}${systemd_system_unitdir}/hostapd@.service.d/
+    install -m 0644 ${UNPACKDIR}/10-wait-bridge.conf ${D}${systemd_system_unitdir}/hostapd@.service.d/
 
     # Enable hostapd@wlan0 and hostapd@wlan1 at boot (the template's
     # [Install] WantedBy=network.target).

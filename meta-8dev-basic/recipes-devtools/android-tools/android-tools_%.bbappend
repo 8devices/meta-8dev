@@ -4,9 +4,9 @@ SRC_URI:append:8dev-basic = " file://android-tools-adbd.service.d/env-home.conf"
 SRC_URI:append:8dev-basic = " file://android-tools-adbd.service.d/volatile-session.conf"
 
 do_install:append:8dev-basic() {
-    install -m 0644 -D ${WORKDIR}/android-tools-adbd.service.d/env-home.conf \
+    install -m 0644 -D ${UNPACKDIR}/android-tools-adbd.service.d/env-home.conf \
         ${D}${sysconfdir}/systemd/system/android-tools-adbd.service.d/env-home.conf
-    install -m 0644 -D ${WORKDIR}/android-tools-adbd.service.d/volatile-session.conf \
+    install -m 0644 -D ${UNPACKDIR}/android-tools-adbd.service.d/volatile-session.conf \
         ${D}${sysconfdir}/systemd/system/android-tools-adbd.service.d/volatile-session.conf
 }
 

@@ -2,10 +2,6 @@
 # Scoped to :8dev-basic so other distros are untouched.
 FILESEXTRAPATHS:prepend:8dev-basic := "${THISDIR}/files:"
 
-# meta-qcom-hwe adds "gnu-efi" to PACKAGECONFIG, but that key no longer exists in
-# systemd 255 and trips a QA warning. Drop it; "efi" alone keeps systemd-boot/UKI.
-PACKAGECONFIG:remove:8dev-basic = "gnu-efi"
-
 # Drop userdbd: static /etc/passwd, no DynamicUser= services. nss-systemd kept.
 PACKAGECONFIG:remove:8dev-basic = "userdb"
 
@@ -30,11 +26,11 @@ SRC_URI:append:8dev-basic = " \
 
 do_install:append:8dev-basic() {
     install -d ${D}${systemd_system_unitdir}/systemd-networkd-wait-online.service.d
-    install -m 0644 ${WORKDIR}/networkd-wait-online-any.conf \
+    install -m 0644 ${UNPACKDIR}/networkd-wait-online-any.conf \
         ${D}${systemd_system_unitdir}/systemd-networkd-wait-online.service.d/10-any.conf
 
     install -d ${D}${systemd_unitdir}/resolved.conf.d
-    install -m 0644 ${WORKDIR}/resolved-no-zeroconf.conf \
+    install -m 0644 ${UNPACKDIR}/resolved-no-zeroconf.conf \
         ${D}${systemd_unitdir}/resolved.conf.d/10-no-zeroconf.conf
 }
 

@@ -8,7 +8,7 @@ SRC_URI:append:citron = "\
 "
 
 do_kernel_checkout:append:citron() {
-    if [ -d ${WORKDIR}/files ]; then
-        cp -r ${WORKDIR}/files/* ${S}
+    if [ -d ${UNPACKDIR}/files ]; then
+        cp -r ${UNPACKDIR}/files/* ${S}
     fi
 }

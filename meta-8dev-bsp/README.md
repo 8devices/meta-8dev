@@ -10,11 +10,11 @@ This layer depends on:
 
 	URI: https://git.yoctoproject.org/poky
 	layers: meta, meta-poky
-	branch: scarthgap
+	branch: wrynose
 
 	URI: https://git.openembedded.org/meta-openembedded
 	layers: meta-oe
-	branch: scarthgap
+	branch: wrynose
 
 ## Quick Start
 

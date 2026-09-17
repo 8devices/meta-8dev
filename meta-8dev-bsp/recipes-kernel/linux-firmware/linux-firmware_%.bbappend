@@ -7,19 +7,19 @@ SRC_URI:append:robovision = " \
 "
 
 do_compile:append:robovision() {
-     (cd ${WORKDIR}/QCN9274; ath12k-bdencoder -c board-2.json -o board-2.bin)
+     (cd ${UNPACKDIR}/QCN9274; ath12k-bdencoder -c board-2.json -o board-2.bin)
 }
 
 do_install:append:robovision() {
-    install -m 0644 ${WORKDIR}/QCN9274/board-2.bin \
+    install -m 0644 ${UNPACKDIR}/QCN9274/board-2.bin \
         ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0
 
-    install -m 0644 ${WORKDIR}/QCN9274/amss_dualmac.bin \
+    install -m 0644 ${UNPACKDIR}/QCN9274/amss_dualmac.bin \
         ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/amss.bin
-    install -m 0644 ${WORKDIR}/QCN9274/m3.bin \
+    install -m 0644 ${UNPACKDIR}/QCN9274/m3.bin \
         ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/m3.bin
 
-    install -m 0644 ${WORKDIR}/QCN9274/caldata_4.bin \
+    install -m 0644 ${UNPACKDIR}/QCN9274/caldata_4.bin \
         ${D}${nonarch_base_libdir}/firmware/ath12k/QCN9274/hw2.0/caldata.bin
 }
 
@@ -40,30 +40,3 @@ QCM6490_SRC_URI:robovision = ""
 do_install:append:qcom() {
     find ${D} -name gptauuid.xml -delete
 }
-
-# Override meta-qcom-hwe's hlosfw_update_packages: a sub-package whose files are
-# absent from the firmware archive never gets a staging dir, and the upstream
-# os.listdir() then aborts do_package. Skip packages with no staged files.
-def hlosfw_update_packages(d, pkgs_list):
-    import os
-    import shutil
-
-    pkgdest = d.getVar('PKGDEST')
-    soc = pkgs_list.split('_')[0].lower()
-
-    for pkg in d.getVar(pkgs_list).split():
-        soc_dir = '%s/%s/%s' % (pkgdest, pkg, soc)
-        parent_dir = os.path.dirname(soc_dir)
-
-        if os.path.isdir(soc_dir):
-            for item in os.listdir(soc_dir):
-                shutil.move(os.path.join(soc_dir, item), os.path.join(parent_dir, item))
-            os.rmdir(soc_dir)
-
-        if pkg.endswith("qcom-tzapps-updates"):
-            tza_updates_dir = '%s/%s/%s' % (pkgdest, pkg, d.getVar('FIRMWARE_UPDATES_DIR'))
-            tza_parent_dir = os.path.dirname(tza_updates_dir)
-            if os.path.isdir(tza_updates_dir):
-                for item in os.listdir(tza_updates_dir):
-                    shutil.move(os.path.join(tza_updates_dir, item), os.path.join(tza_parent_dir, item))
-                os.rmdir(tza_updates_dir)

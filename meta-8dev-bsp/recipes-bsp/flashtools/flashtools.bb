@@ -17,8 +17,8 @@ do_install[noexec] = "1"
 
 do_deploy () {
     if ${@bb.utils.contains('MACHINE_FEATURES', 'fastboot', 'true', 'false', d)}; then
-        install -m 0755 ${WORKDIR}/fastboot_flash.py ${DEPLOYDIR}
-        install -m 0755 ${WORKDIR}/fastboot.json ${DEPLOYDIR}
+        install -m 0755 ${UNPACKDIR}/fastboot_flash.py ${DEPLOYDIR}
+        install -m 0755 ${UNPACKDIR}/fastboot.json ${DEPLOYDIR}
     fi
 }
 addtask deploy after do_install

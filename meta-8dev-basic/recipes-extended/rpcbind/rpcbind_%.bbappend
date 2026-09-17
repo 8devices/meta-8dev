@@ -5,7 +5,7 @@ SRC_URI += "file://rpcbind-runtimedir.conf"
 
 do_install:append() {
     install -d ${D}${systemd_system_unitdir}/rpcbind.service.d
-    install -m 0644 ${WORKDIR}/rpcbind-runtimedir.conf \
+    install -m 0644 ${UNPACKDIR}/rpcbind-runtimedir.conf \
         ${D}${systemd_system_unitdir}/rpcbind.service.d/10-runtimedir.conf
 }
 

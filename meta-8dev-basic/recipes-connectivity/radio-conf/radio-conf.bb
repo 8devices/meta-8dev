@@ -16,17 +16,17 @@ do_compile[noexec] = "1"
 
 do_install() {
     install -d ${D}/${sbindir}
-    install -m 0755 ${WORKDIR}/radioconf.sh ${D}/${sbindir}/radioconf
+    install -m 0755 ${UNPACKDIR}/radioconf.sh ${D}/${sbindir}/radioconf
 
-    if [ -r ${WORKDIR}/radios.cfg ]; then
+    if [ -r ${UNPACKDIR}/radios.cfg ]; then
         install -d ${D}/${sysconfdir}
-        install -m 0644 ${WORKDIR}/radios.cfg ${D}/${sysconfdir}
+        install -m 0644 ${UNPACKDIR}/radios.cfg ${D}/${sysconfdir}
     fi
 }
 
 do_install:append:robovision() {
     install -d ${D}${base_libdir}/udev/rules.d/
-    install -m 0644 ${WORKDIR}/radio-rename.rules ${D}${base_libdir}/udev/rules.d/
+    install -m 0644 ${UNPACKDIR}/radio-rename.rules ${D}${base_libdir}/udev/rules.d/
 }
 
 FILES:${PN} = " \
