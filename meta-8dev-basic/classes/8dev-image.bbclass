@@ -23,3 +23,10 @@ FEATURE_PACKAGES_update-tools = "packagegroup-update-tools"
 FEATURE_PACKAGES_video-streaming = "packagegroup-video-streaming"
 
 CORE_IMAGE_EXTRA_INSTALL:append = " board-conf radio-conf"
+
+# citron boots the UKI from the ESP, so the /boot copy packagegroup-core-boot
+# drags in is dead weight. Leaves /boot as an empty mount point.
+empty_boot () {
+    find ${IMAGE_ROOTFS}/boot -mindepth 1 -delete
+}
+ROOTFS_POSTPROCESS_COMMAND:append:citron = " empty_boot;"
