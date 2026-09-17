@@ -5,7 +5,7 @@
 #include "qcs6490-citron.dtsi"
 
 / {
-	model = "8Devices Robonode Vision";
+	model = "8devices Robonode Vision";
 	compatible = "8devices,robovision", "8devices,citron",
 		"qcom,qcm6490";
 
