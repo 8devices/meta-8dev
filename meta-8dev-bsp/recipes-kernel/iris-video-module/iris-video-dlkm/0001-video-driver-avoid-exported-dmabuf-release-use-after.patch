@@ -1,0 +1,168 @@
+From 7cdf2f3af2d85f3853071257739da1d488a0d22c Mon Sep 17 00:00:00 2001
+From: Renjiang Han <renjiang@qti.qualcomm.com>
+Date: Fri, 17 Jul 2026 09:39:32 +0530
+Subject: [PATCH] video-driver: avoid exported dmabuf release use-after-free
+
+Exported vb2 dma-bufs may outlive the msm_vidc_buffer that created them.
+During teardown, msm_vb2_put() can return the msm_vidc_buffer to the
+buffer pool while the exported dma_buf still holds a reference through
+msm_vidc_dma_buf_info. A later dma_buf release then dereferences
+dinfo->buf to free the sg_table, which can fault after the buffer has
+already been recycled or destroyed.
+
+Keep the exported sg_table ownership information in
+msm_vidc_dma_buf_info, and make dma_buf attach/release use that state
+instead of dereferencing dinfo->buf. When msm_vb2_put() observes that
+dma_buf release is deferred, detach the soon-to-be-pooled buffer from
+the exported dma_buf state before returning it to the pool.
+
+Signed-off-by: Renjiang Han <renjiang@qti.qualcomm.com>
+
+Upstream-Status: Backport [https://github.com/qualcomm-linux/video-driver/commit/7cdf2f3af2d85f3853071257739da1d488a0d22c]
+---
+ driver/vidc/inc/msm_vidc_internal.h |  2 ++
+ driver/vidc/src/msm_vidc_vb2.c      | 43 +++++++++++++++++++++--------
+ 2 files changed, 33 insertions(+), 12 deletions(-)
+
+diff --git a/driver/vidc/inc/msm_vidc_internal.h b/driver/vidc/inc/msm_vidc_internal.h
+index 8186d242a..346751c43 100644
+--- a/driver/vidc/inc/msm_vidc_internal.h
++++ b/driver/vidc/inc/msm_vidc_internal.h
+@@ -1064,6 +1064,8 @@ struct msm_vidc_dma_buf_info  {
+ 	struct vb2_vmarea_handler handler;
+ 	struct  msm_vidc_buffer   *buf;
+ 	struct  device            *dev;
++	struct sg_table           *sg_table;
++	bool                      sg_table_alloc;
+ };
+ 
+ struct msm_vidc_buffer {
+diff --git a/driver/vidc/src/msm_vidc_vb2.c b/driver/vidc/src/msm_vidc_vb2.c
+index 687776040..db1685cce 100644
+--- a/driver/vidc/src/msm_vidc_vb2.c
++++ b/driver/vidc/src/msm_vidc_vb2.c
+@@ -28,6 +28,7 @@ extern struct msm_vidc_core *g_core;
+ 
+ static struct sg_table *msm_vidc_get_sg_table(struct msm_vidc_buffer *buf);
+ static void msm_vidc_put_sg_table(struct msm_vidc_buffer *buf);
++static void msm_vidc_put_dinfo_sg_table(struct msm_vidc_dma_buf_info *dinfo);
+ 
+ static void msm_vb2_vm_open(struct vm_area_struct *vma);
+ static void msm_vb2_vm_close(struct vm_area_struct *vma);
+@@ -146,6 +147,8 @@ static void *msm_vb2_alloc(struct vb2_buffer *vb, struct device *dev,
+ 	dinfo->kvaddr = buf->kvaddr;
+ 	dinfo->device_addr = buf->device_addr;
+ 	dinfo->dma_attrs = buf->dma_attrs;
++	dinfo->sg_table = buf->sg_table;
++	dinfo->sg_table_alloc = buf->sg_table_alloc;
+ 	refcount_set(&dinfo->refcount, 1);
+ 	i_vpr_l(inst, "%s: refcount set to %d\n", __func__,
+ 		refcount_read(&dinfo->refcount));
+@@ -299,6 +302,11 @@ void msm_vb2_put(void *buf_priv)
+ 		} else {
+ 			i_vpr_l(inst, "%s: refcount decremented to %d dma_buf: %pK\n", __func__,
+ 				refcount_read(&buf->dma_buf_info->refcount), buf->dmabuf);
++
++			buf->dma_buf_info->buf = NULL;
++			buf->sg_table = NULL;
++			buf->sg_table_alloc = false;
++			buf->dma_buf_info = NULL;
+ 		}
+ 	}
+ 
+@@ -361,7 +369,6 @@ static int msm_vb2_dmabuf_ops_attach(struct dma_buf *dbuf,
+ 	struct msm_vidc_dma_buf_info *dinfo;
+ 	struct msm_vb2_attachment *attach;
+ 	struct scatterlist *rd, *wr;
+-	struct msm_vidc_buffer *buf;
+ 	struct sg_table *sgt;
+ 	unsigned int i;
+ 	int ret;
+@@ -374,10 +381,8 @@ static int msm_vb2_dmabuf_ops_attach(struct dma_buf *dbuf,
+ 	if (IS_ERR_OR_NULL(dinfo))
+ 		return -EINVAL;
+ 
+-	buf = dinfo->buf;
+-
+-	if (IS_ERR_OR_NULL(buf)) {
+-		d_vpr_e("%s: invalid buffer in dma_buf_info\n", __func__);
++	if (IS_ERR_OR_NULL(dinfo->sg_table)) {
++		d_vpr_e("%s: invalid sg_table in dma_buf_info\n", __func__);
+ 		return -EINVAL;
+ 	}
+ 
+@@ -386,16 +391,16 @@ static int msm_vb2_dmabuf_ops_attach(struct dma_buf *dbuf,
+ 		return -ENOMEM;
+ 
+ 	sgt = &attach->sgt;
+-	/* Copy the buf->base_sgt scatter list to the attachment, as we can't
++	/* Copy the exported base sg_table to the attachment, as we can't
+ 	 * map the same scatter list to multiple attachments at the same time.
+ 	 */
+-	ret = sg_alloc_table(sgt, buf->sg_table->orig_nents, GFP_KERNEL);
++	ret = sg_alloc_table(sgt, dinfo->sg_table->orig_nents, GFP_KERNEL);
+ 	if (ret) {
+ 		kfree(attach);
+ 		return -ENOMEM;
+ 	}
+ 
+-	rd = buf->sg_table->sgl;
++	rd = dinfo->sg_table->sgl;
+ 	wr = sgt->sgl;
+ 	for (i = 0; i < sgt->orig_nents; ++i) {
+ 		sg_set_page(wr, sg_page(rd), rd->length, rd->offset);
+@@ -477,13 +482,11 @@ static void msm_vb2_dmabuf_ops_unmap(struct dma_buf_attachment *db_attach,
+ static void msm_vb2_dmabuf_ops_release(struct dma_buf *dbuf)
+ {
+ 	struct msm_vidc_dma_buf_info *dinfo;
+-	struct msm_vidc_buffer *buf;
+ 
+ 	if (IS_ERR_OR_NULL(dbuf) || IS_ERR_OR_NULL(dbuf->priv))
+ 		return;
+ 
+ 	dinfo = dbuf->priv;
+-	buf = dinfo->buf;
+ 
+ 	if (refcount_read(&dinfo->refcount) == 0)
+ 		return;
+@@ -499,8 +502,8 @@ static void msm_vb2_dmabuf_ops_release(struct dma_buf *dbuf)
+ 	dma_free_attrs(dinfo->dev, dinfo->buffer_size, dinfo->kvaddr,
+ 		       dinfo->device_addr, dinfo->dma_attrs);
+ 
+-	if (buf && buf->sg_table_alloc)
+-		msm_vidc_put_sg_table(buf);
++	if (dinfo->sg_table_alloc)
++		msm_vidc_put_dinfo_sg_table(dinfo);
+ 
+ 	kfree(dinfo);
+ 	dbuf->priv = NULL;
+@@ -612,6 +615,19 @@ static void msm_vidc_put_sg_table(struct msm_vidc_buffer *buf)
+ 	}
+ }
+ 
++static void msm_vidc_put_dinfo_sg_table(struct msm_vidc_dma_buf_info *dinfo)
++{
++	if (!dinfo->sg_table_alloc)
++		return;
++
++	if (dinfo->sg_table) {
++		sg_free_table(dinfo->sg_table);
++		kfree(dinfo->sg_table);
++		dinfo->sg_table = NULL;
++		dinfo->sg_table_alloc = false;
++	}
++}
++
+ static struct dma_buf *msm_vb2_get_dmabuf(struct vb2_buffer *vb,
+ 				  void *buf_priv,
+ 				  unsigned long flags)
+@@ -636,6 +652,9 @@ static struct dma_buf *msm_vb2_get_dmabuf(struct vb2_buffer *vb,
+ 	if (WARN_ON(!buf->sg_table))
+ 		return NULL;
+ 
++	dinfo->sg_table = buf->sg_table;
++	dinfo->sg_table_alloc = buf->sg_table_alloc;
++
+ 	dbuf = dma_buf_export(&exp_info);
+ 	if (IS_ERR(dbuf)) {
+ 		i_vpr_e(inst, "%s: failed to export dma buf\n", __func__);
