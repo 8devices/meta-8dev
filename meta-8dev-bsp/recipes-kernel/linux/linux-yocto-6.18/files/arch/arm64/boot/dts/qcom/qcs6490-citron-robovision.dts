@@ -4,6 +4,7 @@
 
 #include "qcs6490-citron-som.dtsi"
 #include "qcs6490-citron-common.dtsi"
+#include <dt-bindings/leds/common.h>
 
 / {
 	model = "8devices Robonode Vision";
@@ -17,6 +18,34 @@
 	 * (citron_cdt.bin) reports or the DTB is skipped.
 	 */
 	qcom,board-id = <0x010120 2>;
+
+	/* Common-anode LED, cathodes low-side switched by N-FETs, hence active-HIGH. */
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&rgb_led_state>;
+
+		led-red {
+			gpios = <&tlmm 117 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_RED>;
+			function = LED_FUNCTION_INDICATOR;
+			default-state = "off";
+		};
+
+		led-green {
+			gpios = <&tlmm 84 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_INDICATOR;
+			default-state = "off";
+		};
+
+		led-blue {
+			gpios = <&tlmm 125 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_BLUE>;
+			function = LED_FUNCTION_INDICATOR;
+			default-state = "off";
+		};
+	};
 };
 
 /*
@@ -181,5 +210,12 @@
 		pins = "gpio105", "gpio36";
 		function = "gpio";
 		bias-pull-up;
+	};
+
+	rgb_led_state: rgb-led-state {
+		pins = "gpio117", "gpio84", "gpio125";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
 	};
 };
