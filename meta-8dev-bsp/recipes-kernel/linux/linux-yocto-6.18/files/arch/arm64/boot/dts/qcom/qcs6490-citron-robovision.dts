@@ -12,12 +12,13 @@
 		"qcom,qcm6490";
 
 	/*
-	 * Read by the Qualcomm bootloader DTB selector (not Linux) to pick this
-	 * DTB for the running hardware. board-id = <0x00PMPmPH subtype>:
-	 * hw-platform 0x20, version 1.1, subtype 2. Must match what the CDT
-	 * (citron_cdt.bin) reports or the DTB is skipped.
+	 * Cell 0 <unused:8 major:8 minor:8 platform_type:8>, cell 1 <ddr_class:3
+	 * subtype:8>. The DDR class is mandatory: UEFI compares it for equality, and
+	 * with no match it falls back to its built-in RB3gen2 tree, which has no eMMC
+	 * node, so the rootfs never appears. Must agree with the flashed CDT, and a
+	 * board with different DRAM needs a different value.
 	 */
-	qcom,board-id = <0x010120 2>;
+	qcom,board-id = <0x00010020 0x642>;
 
 	/* Common-anode LED, cathodes low-side switched by N-FETs, hence active-HIGH. */
 	leds {

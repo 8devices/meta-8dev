@@ -11,9 +11,11 @@
 	compatible = "8devices,citron-dvk", "8devices,citron",
 		"qcom,qcm6490";
 
-	/* Must agree with the CDT flashed by edl_flash.py -b. */
-	qcom,board-id = <0x00010020 0x81>,	/* variant + subtype cell */
-			<0x81010020 0x81>;	/* subtype also in bits 31-24 */
+	/*
+	 * Cell 0 <unused:8 major:8 minor:8 platform_type:8>, cell 1 <ddr_class:3
+	 * subtype:8>. UEFI rejects the dtb unless this matches the flashed CDT.
+	 */
+	qcom,board-id = <0x00010020 0x641>;
 };
 
 /*

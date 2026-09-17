@@ -2,7 +2,7 @@
 /*
  * Hardware and SoC enablement common to the Citron carriers, which derive from one
  * reference design. The SOM dtsi leaves everything off; this is what the carriers
- * turn on.
+ * turn on. qcs6490-citron-generic.dts assumes none of it and does not include this.
  */
 
 /* GENI needs this to program any SE the bootloader left alone, else -EINVAL. */

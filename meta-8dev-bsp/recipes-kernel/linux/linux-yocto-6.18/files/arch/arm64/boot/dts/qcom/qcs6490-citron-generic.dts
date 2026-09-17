@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+/dts-v1/;
+
+#include "qcs6490-citron-som.dtsi"
+
+/ {
+	model = "8devices Citron SOM Generic Board";
+	compatible = "8devices,citron-generic", "8devices,citron",
+		"qcom,qcm6490";
+
+	qcom,board-id = <0x00010020 0x640>;
+};
+
+/* Fixed device role: no USB_ID/CC path reaches the SoC, and +5V is held off. */
+&usb_1 {
+	dr_mode = "peripheral";
+};
+
+/* No Type-C mux here and the SS lanes arrive at a fixed orientation. */
+&usb_1_qmpphy {
+	/delete-property/ orientation-switch;
+};
+
+/* UCS2113 load-switch enable; the regulator below holds USB0's 5V off. */
+&tlmm {
+	usb0_vbus_en_state: usb0-vbus-en-state {
+		pins = "gpio52";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+};
+
+/ {
+	usb0_vbus: regulator-usb0-vbus {
+		compatible = "regulator-fixed";
+		regulator-name = "USB0_VBUS";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&tlmm 52 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb0_vbus_en_state>;
+	};
+};
