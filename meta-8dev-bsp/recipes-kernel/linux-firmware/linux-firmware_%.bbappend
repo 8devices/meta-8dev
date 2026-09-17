@@ -30,6 +30,14 @@ do_install:append:robovision() {
     # other rtl8168 variant blobs.
     find ${D}${nonarch_base_libdir}/firmware/rtl_nic -name 'rtl8168*.fw' \
         ! -name 'rtl8168h-2.fw' -delete
+
+    # ~24M of VPU variants for other SoCs. Venus loads vpu20_p1.mbn and Iris loads
+    # vpu20_p1_gen2.mbn, which is a symlink, so both it and its blob must stay.
+    find ${D}${nonarch_base_libdir}/firmware/qcom/vpu -type f \
+        ! -name 'vpu20_p1.mbn' ! -name 'vpu20_p1_gen2_s6.mbn' -delete
+    find ${D}${nonarch_base_libdir}/firmware/qcom/vpu -type l \
+        ! -name 'vpu20_p1_gen2.mbn' -delete
+    rm -rf ${D}${nonarch_base_libdir}/firmware/qcom/vpu-1.0
 }
 
 # gptauuid.xml is a GPT partition map, not loadable firmware, and no HLOSFW
