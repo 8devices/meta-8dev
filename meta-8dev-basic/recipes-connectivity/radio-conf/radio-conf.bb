@@ -11,6 +11,8 @@ SRC_URI:append:citron = "\
     file://radio-rename.rules \
 "
 
+S = "${UNPACKDIR}"
+
 do_configure[noexec] = "1"
 do_compile[noexec] = "1"
 
@@ -25,8 +27,8 @@ do_install() {
 }
 
 do_install:append:citron() {
-    install -d ${D}${base_libdir}/udev/rules.d/
-    install -m 0644 ${UNPACKDIR}/radio-rename.rules ${D}${base_libdir}/udev/rules.d/
+    install -d ${D}${nonarch_base_libdir}/udev/rules.d/
+    install -m 0644 ${UNPACKDIR}/radio-rename.rules ${D}${nonarch_base_libdir}/udev/rules.d/
 }
 
 FILES:${PN} = " \
@@ -35,7 +37,7 @@ FILES:${PN} = " \
 "
 
 FILES:${PN}:append:citron = "\
-   ${base_libdir}/udev/ \
+   ${nonarch_base_libdir}/udev/ \
 "
 
 RDEPENDS:${PN} = "hostapd wpa-supplicant iw"

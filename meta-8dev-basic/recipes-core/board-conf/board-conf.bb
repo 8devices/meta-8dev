@@ -26,5 +26,5 @@ SYSTEMD_SERVICE:${PN} = "board-init.service"
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
 
 FILES:${PN} += "\
-    ${base_libdir}/boardinfo.d \
+    ${nonarch_base_libdir}/boardinfo.d \
 "

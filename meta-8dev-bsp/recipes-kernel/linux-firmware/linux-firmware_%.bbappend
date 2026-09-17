@@ -42,6 +42,6 @@ do_install:append:citron() {
 
 # gptauuid.xml is a GPT partition map, not loadable firmware, and no HLOSFW
 # update package claims it.
-do_install:append:qcom() {
+do_install:append:citron() {
     find ${D} -name gptauuid.xml -delete
 }

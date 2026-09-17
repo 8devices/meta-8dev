@@ -1,7 +1,5 @@
 FILESEXTRAPATHS:prepend:citron := "${THISDIR}/files:"
 
-PACKAGECONFIG_CONFARGS:citron = ""
-
 SRC_URI:append:citron = "\
     file://swupdate.cfg \
     file://09-swupdate-args \

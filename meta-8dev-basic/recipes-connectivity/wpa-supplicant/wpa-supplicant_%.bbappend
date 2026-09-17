@@ -1,7 +1,6 @@
-# wpa_supplicant's install target runs per-binary `install -D` rules in parallel;
-# under high -j they race creating the shared $(BINDIR), failing with "cannot
-# create directory". Serialize the install step to avoid it (install is cheap).
-PARALLEL_MAKEINST = ""
+# Its per-binary `install -D` rules race creating the shared $(BINDIR) under high
+# -j. Serializing is cheap.
+PARALLEL_MAKEINST:8dev-basic = ""
 
 FILESEXTRAPATHS:prepend:8dev-basic := "${THISDIR}/files:"
 SRC_URI:append:8dev-basic = "\
