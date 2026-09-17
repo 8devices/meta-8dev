@@ -13,7 +13,7 @@ FEATURE_PACKAGES_qnn = "packagegroup-ai-runtime"
 IMAGE_FEATURES:append = " ${@bb.utils.contains_any('DISTRO_FEATURES', 'camx camss', 'camera', '', d)}"
 IMAGE_FEATURES:append = " ${@bb.utils.contains('DISTRO_FEATURES', 'qnn', 'qnn', '', d)}"
 
-CORE_IMAGE_EXTRA_INSTALL:append = " board-conf radio-conf"
+IMAGE_INSTALL:append = " board-conf radio-conf"
 
 # citron boots the UKI from the ESP, so the /boot copy packagegroup-core-boot
 # drags in is dead weight. Leaves /boot as an empty mount point.
