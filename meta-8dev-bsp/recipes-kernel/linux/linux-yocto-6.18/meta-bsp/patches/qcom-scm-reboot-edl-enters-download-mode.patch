@@ -27,6 +27,7 @@ lower-priority PSCI handler does a normal reset instead of hanging.
 Other reboot reasons ("bootloader"/"recovery") are unaffected: those go through
 the PMIC PON nvmem-reboot-mode.
 
+Upstream-Status: Pending
 Signed-off-by: Justinas Grauslis <justinas@8devices.com>
 ---
 --- a/drivers/firmware/qcom/qcom_scm.c

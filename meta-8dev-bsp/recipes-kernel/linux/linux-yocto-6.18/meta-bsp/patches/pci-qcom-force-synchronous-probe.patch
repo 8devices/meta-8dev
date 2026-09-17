@@ -14,6 +14,10 @@ Force synchronous probe so PCIe enumeration no longer runs in an async worker,
 eliminating the warning. Trade-off: PCIe controller bring-up + downstream
 enumeration runs on the boot critical path rather than in parallel, for both
 PCIe controllers.
+
+Upstream-Status: Pending
+Signed-off-by: Justinas Grauslis <justinas@8devices.com>
+---
 --- a/drivers/pci/controller/dwc/pcie-qcom.c
 +++ b/drivers/pci/controller/dwc/pcie-qcom.c
 @@ -2066,7 +2066,16 @@

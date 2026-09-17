@@ -25,6 +25,7 @@ Reproduced and verified on 8devices Robonode Vision (QCS6490): with one
 sensor detached the other now enumerates normally; with both attached
 the media graph is identical to before.
 
+Upstream-Status: Pending
 Signed-off-by: Justinas Grauslis <justinas@8devices.com>
 --- a/drivers/media/platform/qcom/camss/camss.c
 +++ b/drivers/media/platform/qcom/camss/camss.c
