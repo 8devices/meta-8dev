@@ -37,6 +37,7 @@ include cfg/8dev/leds-gpio.scc
 include cfg/8dev/ubifs.scc
 include cfg/8dev/usb-gadget.scc
 include cfg/8dev/usb-classes.scc
+include cfg/8dev/sched-tuning.scc
 
 # --- Patches ---
 # All in one place: linux-8dev carries the same set in git and includes this file
