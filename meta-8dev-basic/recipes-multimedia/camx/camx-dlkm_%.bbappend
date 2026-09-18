@@ -7,7 +7,7 @@ EXTRA_OEMAKE:append:citron = " CAMERA_ARCH=qcm6490 SUPPORTED_ARCH=qcm6490"
 
 # Mainline-kernel fixes for the camera_kt SMMU code: an iommu_set_fault_handler
 # WARN storm on managed domains, and a boot-time "no coherency" mem-mgr init race.
-FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
+FILESEXTRAPATHS:prepend:8dev-basic := "${THISDIR}/files:"
 SRC_URI:append:8dev-basic = " file://0001-cam_smmu-fix-mainline-iommu-warn-and-coherency-probe-race.patch"
 # The sec-heap dma_buf is put twice for one reference, which mainline's file_ref
 # WARNs about at every ICP close. Take a ref for the attachment.

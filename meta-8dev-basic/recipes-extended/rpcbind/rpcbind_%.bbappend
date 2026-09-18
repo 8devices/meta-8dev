@@ -1,4 +1,4 @@
-FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
+FILESEXTRAPATHS:prepend:8dev-basic := "${THISDIR}/files:"
 
 # Drop-in fixing rpcbind's early-boot failure (see the .conf for rationale).
 SRC_URI:append:8dev-basic = " file://rpcbind-runtimedir.conf"

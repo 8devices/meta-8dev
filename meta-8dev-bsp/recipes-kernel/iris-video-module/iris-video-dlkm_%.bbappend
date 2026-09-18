@@ -1,4 +1,4 @@
-FILESEXTRAPATHS:prepend := "${THISDIR}/${PN}:"
+FILESEXTRAPATHS:prepend:citron := "${THISDIR}/${PN}:"
 
 # An exported dma_buf outlives the msm_vidc_buffer it came from, so the release
 # path reads a stale pointer and panics on gst-launch exit. Fixed upstream in

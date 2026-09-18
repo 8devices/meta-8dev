@@ -7,7 +7,7 @@ RDEPENDS:${PN}-server-lib:remove:citron = "camxlib-lemans"
 
 # An abruptly disconnecting client can crash cam-server; restart so the camera
 # recovers without manual intervention.
-FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
+FILESEXTRAPATHS:prepend:citron := "${THISDIR}/files:"
 SRC_URI:append:citron = " file://cam-server-restart.conf"
 
 # This board has no motion sensors, so EIS and NCS only buy gyro QMI probe
