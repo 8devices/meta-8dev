@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Justinas Grauslis <justinas@8devices.com>
+Date: Thu, 18 Sep 2026 12:00:00 +0300
+Subject: [PATCH] detect emmc from the unsuffixed xbl
+
+set_active_boot_slot() decides whether the storage is eMMC by resolving
+"xbl_a", then refuses to continue when that says UFS and /dev/bsg/ufs-bsg0
+cannot be opened:
+
+  Unable to open '/dev/bsg/ufs-bsg0': No such file or directory
+  Is CONFIG_SCSI_UFS_BSG is enabled in your kernel?
+  SLOT b: Failed to set active
+
+A board whose xbl carries no slot suffix has no xbl_a to resolve, so the
+lookup fails and gpt_utils_is_partition_backed_by_emmc() reports false, which
+the caller reads as UFS. The kernel option named in the message is a red
+herring: an eMMC board has no UFS controller to expose a bsg node in the first
+place. Reads are unaffected, so only setting a slot fails, and with it every
+A/B update and rollback.
+
+Fall back to the unsuffixed partition name. Boards that do have xbl_a resolve
+it first and are unchanged; the rest now report eMMC correctly, which also
+skips the xbl boot-partition switch they have no use for.
+
+Upstream-Status: Pending
+---
+ bootctrl_impl.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/bootctrl_impl.c b/bootctrl_impl.c
+--- a/bootctrl_impl.c
++++ b/bootctrl_impl.c
+@@ -705,7 +705,10 @@
+ 		return -1;
+ 	}
+ 
+-	ismmc = gpt_utils_is_partition_backed_by_emmc(PTN_XBL AB_SLOT_A_SUFFIX);
++	// An unsuffixed xbl leaves xbl_a unresolvable, which the lookup reports
++	// as UFS. Fall back to the plain name before believing that.
++	ismmc = gpt_utils_is_partition_backed_by_emmc(PTN_XBL AB_SLOT_A_SUFFIX) ||
++		gpt_utils_is_partition_backed_by_emmc(PTN_XBL);
+ 
+ 	// Do this *before* updating all the slot attributes
+ 	// to make sure we can
