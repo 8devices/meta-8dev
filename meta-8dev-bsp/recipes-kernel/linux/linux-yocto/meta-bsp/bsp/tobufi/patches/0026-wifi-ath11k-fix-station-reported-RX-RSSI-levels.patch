@@ -1,0 +1,43 @@
+From fa6e50d10462f48a730c0c512c12b051666c2c42 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Art=C5=ABras=20Matonis?= <arturas@8devices.com>
+Date: Tue, 25 Aug 2026 15:47:33 +0300
+Subject: [PATCH] wifi: ath11k: fix station reported RX RSSI levels
+
+Adjust reported signal units based on dB/dBm radio configuration.
+
+ref: 8devices/software/yocto/meta-8dev-qcs405#858
+Upstream-Status: Pending
+
+---
+ drivers/net/wireless/ath/ath11k/mac.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath11k/mac.c b/drivers/net/wireless/ath/ath11k/mac.c
+index edd864e59a30..74345f40d47c 100644
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -8624,6 +8624,8 @@ static void ath11k_mac_put_chain_rssi(struct station_info *sinfo,
+ 	struct ath11k *ar = arsta->arvif->ar;
+ 	int i;
+ 	s8 rssi;
++	bool db2dbm = test_bit(WMI_TLV_SERVICE_HW_DB2DBM_CONVERSION_SUPPORT,
++			       ar->ab->wmi_ab.svc_map);
+ 
+ 	for (i = 0; i < ARRAY_SIZE(sinfo->chain_signal); i++) {
+ 		sinfo->chains &= ~BIT(i);
+@@ -8632,13 +8634,13 @@ static void ath11k_mac_put_chain_rssi(struct station_info *sinfo,
+ 			arsta->chain_signal[i] = ATH11K_INVALID_RSSI_FULL;
+ 
+ 		ath11k_dbg(ar->ab, ATH11K_DBG_MAC,
+-			   "sta statistics %s rssi[%d] %d\n", pre, i, rssi);
++			   "sta statistics %s db2dbm %u rssi[%d] %d\n", pre, db2dbm, i, rssi);
+ 
+ 		if (rssi != ATH11K_DEFAULT_NOISE_FLOOR &&
+ 		    rssi != ATH11K_INVALID_RSSI_FULL &&
+ 		    rssi != ATH11K_INVALID_RSSI_EMPTY &&
+ 		    rssi != 0) {
+-			sinfo->chain_signal[i] = rssi;
++			sinfo->chain_signal[i] = db2dbm ? rssi : rssi + ATH11K_DEFAULT_NOISE_FLOOR;
+ 			sinfo->chains |= BIT(i);
+ 			sinfo->filled |= BIT_ULL(NL80211_STA_INFO_CHAIN_SIGNAL);
+ 		}

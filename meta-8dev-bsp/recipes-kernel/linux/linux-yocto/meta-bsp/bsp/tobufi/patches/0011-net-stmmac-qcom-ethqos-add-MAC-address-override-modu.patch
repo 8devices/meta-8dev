@@ -1,0 +1,53 @@
+From 9bad3012e90d8c65df34f144d41dcdb47a703137 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Edvinas=20Stun=C5=BE=C4=97nas?= <edvinas@8devices.com>
+Date: Thu, 13 Mar 2025 16:03:18 +0000
+Subject: [PATCH] net: stmmac: qcom-ethqos: add MAC address override module
+ param
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Specifying MAC address in DTS is not feasible in most cases, also not
+all platforms supports or are eligible to keep and retrieve HW address
+from nvmem. Module parameter seems to be good alternative to specify
+MAC address and control it from user space.
+
+Signed-off-by: Edvinas Stunžėnas <edvinas@8devices.com>
+Upstream-Status: Inappropriate [embedded specific]
+---
+ drivers/net/ethernet/stmicro/stmmac/dwmac-qcom-ethqos.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-qcom-ethqos.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-qcom-ethqos.c
+index ded1bbda5266..a47d53a686a7 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-qcom-ethqos.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-qcom-ethqos.c
+@@ -121,6 +121,10 @@ struct qcom_ethqos {
+ 	bool needs_sgmii_loopback;
+ };
+ 
++static char *mac_addr;
++module_param(mac_addr, charp, 0644);
++MODULE_PARM_DESC(mac_addr, "Network device MAC address");
++
+ static int rgmii_readl(struct qcom_ethqos *ethqos, unsigned int offset)
+ {
+ 	return readl(ethqos->rgmii_base + offset);
+@@ -752,6 +756,7 @@ static int qcom_ethqos_probe(struct platform_device *pdev)
+ 	struct stmmac_resources stmmac_res;
+ 	struct device *dev = &pdev->dev;
+ 	struct qcom_ethqos *ethqos;
++	u8 maddr[ETH_ALEN];
+ 	int ret;
+ 
+ 	ret = stmmac_get_platform_resources(pdev, &stmmac_res);
+@@ -765,6 +770,9 @@ static int qcom_ethqos_probe(struct platform_device *pdev)
+ 				     "dt configuration failed\n");
+ 	}
+ 
++	if (mac_addr && mac_pton(mac_addr, maddr) && is_valid_ether_addr(maddr))
++		memcpy(stmmac_res.mac, maddr, sizeof(stmmac_res.mac));
++
+ 	plat_dat->clks_config = ethqos_clks_config;
+ 
+ 	ethqos = devm_kzalloc(dev, sizeof(*ethqos), GFP_KERNEL);

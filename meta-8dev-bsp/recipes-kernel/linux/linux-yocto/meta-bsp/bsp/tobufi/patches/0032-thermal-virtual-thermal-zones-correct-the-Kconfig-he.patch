@@ -1,0 +1,65 @@
+From dbdb6bd2ecefdecb6e3c351da89f7ba25b607381 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Giedr=C4=97=20=C5=A0imk=C5=ABnait=C4=97?=
+ <giedre.s@8devices.com>
+Date: Thu, 17 Sep 2026 13:47:33 +0000
+Subject: [PATCH] thermal: virtual-thermal-zones correct the Kconfig help text.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ref.: 8devices/software/yocto/meta-8dev-qcs405#799
+
+The help text omitted weighted-average from the list of aggregation
+methods, described the driver only in general terms, and did not say
+that the module has to be loaded explicitly.
+
+Name weighted-average, state that a source may itself be a virtual zone
+so zones can be chained, and that cycles and chains deeper than eight
+are rejected.  Say why modprobe is required: the driver registers its
+own platform device when it initialises, so there is no device present
+beforehand for the module to be autoloaded from.
+
+Signed-off-by: Giedrė Šimkūnaitė <giedre.s@8devices.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+(cherry picked from commit 53b6f0e7eff0f1898de67ed77c4a5df5c95130d5)
+Upstream-Status: Pending
+
+---
+ drivers/thermal/Kconfig | 14 ++++++++------
+ 1 file changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/thermal/Kconfig b/drivers/thermal/Kconfig
+index a0adcbb00a2b..3aff150a2d18 100644
+--- a/drivers/thermal/Kconfig
++++ b/drivers/thermal/Kconfig
+@@ -257,22 +257,24 @@ config VIRTUAL_THERMAL_ZONES
+ 	  to existing sensors.
+ 
+ 	  For multiple-source zones, the driver supports various temperature
+-	  aggregation methods including: maximum, minimum, average, median,
+-	  rolling average, and exponential average calculations. Default logic
+-	  is 'max' for multiple sources.
++	  aggregation methods: maximum, minimum, average, median, weighted
++	  average, rolling average and exponential average. Default logic is
++	  'max' for multiple sources.
+ 
+ 	  Virtual thermal zones are configured via device tree nodes with
+ 	  compatible = "virtual-thermal-zone" and can define their own
+ 	  trip points and cooling device bindings.
+ 
+-	  This driver can be used on any platform to aggregate sensor
+-	  temperatures or create system-wide thermal zones.
++	  A source may itself be a virtual zone, so zones can be chained;
++	  dependency cycles and chains deeper than 8 are rejected.
+ 
+ 	  Say Y here if you want to enable virtual thermal zone support.
+ 	  If unsure, say N.
+ 
+ 	  To compile this driver as a module, choose M here: the module
+-	  will be called virtual-thermal-zones.
++	  will be called virtual-thermal-zones. It has to be loaded explicitly:
++	  the driver creates its own platform device when it initialises, so
++	  there is no device present beforehand to autoload it from.
+ 
+ config HISI_THERMAL
+ 	tristate "Hisilicon thermal driver"

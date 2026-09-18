@@ -1,0 +1,204 @@
+From d7f9f1cb212d87c4f61945c3266bfbbdeafb58cc Mon Sep 17 00:00:00 2001
+From: Felix Fietkau <nbd@nbd.name>
+Date: Wed, 9 Oct 2024 10:25:47 +0200
+Subject: [PATCH] wifi: cfg80211: pass net_device to .set_monitor_channel
+
+Preparation for allowing multiple monitor interfaces with different channels
+on a multi-radio wiphy.
+
+Signed-off-by: Felix Fietkau <nbd@nbd.name>
+Link: https://patch.msgid.link/35fa652dbfebf93343f8b9a08fdef0467a2a02dc.1728462320.git-series.nbd@nbd.name
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Upstream-Status: Backport
+
+---
+ drivers/net/wireless/ath/wil6210/cfg80211.c        |  1 +
+ drivers/net/wireless/marvell/libertas/cfg.c        |  1 +
+ drivers/net/wireless/microchip/wilc1000/cfg80211.c |  3 ++-
+ include/net/cfg80211.h                             |  1 +
+ net/mac80211/cfg.c                                 |  1 +
+ net/wireless/chan.c                                |  3 ++-
+ net/wireless/core.h                                |  1 +
+ net/wireless/nl80211.c                             |  2 +-
+ net/wireless/rdev-ops.h                            |  5 +++--
+ net/wireless/trace.h                               | 10 ++++++----
+ net/wireless/wext-compat.c                         |  2 +-
+ 11 files changed, 20 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/wil6210/cfg80211.c b/drivers/net/wireless/ath/wil6210/cfg80211.c
+index 40f9a7ef8980..750738ab8cca 100644
+--- a/drivers/net/wireless/ath/wil6210/cfg80211.c
++++ b/drivers/net/wireless/ath/wil6210/cfg80211.c
+@@ -1496,6 +1496,7 @@ int wil_cfg80211_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
+ }
+ 
+ static int wil_cfg80211_set_channel(struct wiphy *wiphy,
++				    struct net_device *dev,
+ 				    struct cfg80211_chan_def *chandef)
+ {
+ 	struct wil6210_priv *wil = wiphy_to_wil(wiphy);
+diff --git a/drivers/net/wireless/marvell/libertas/cfg.c b/drivers/net/wireless/marvell/libertas/cfg.c
+index b700c213d10c..c1f462bb6a3f 100644
+--- a/drivers/net/wireless/marvell/libertas/cfg.c
++++ b/drivers/net/wireless/marvell/libertas/cfg.c
+@@ -486,6 +486,7 @@ static int lbs_add_wps_enrollee_tlv(u8 *tlv, const u8 *ie, size_t ie_len)
+  */
+ 
+ static int lbs_cfg_set_monitor_channel(struct wiphy *wiphy,
++				       struct net_device *dev,
+ 				       struct cfg80211_chan_def *chandef)
+ {
+ 	struct lbs_private *priv = wiphy_priv(wiphy);
+diff --git a/drivers/net/wireless/microchip/wilc1000/cfg80211.c b/drivers/net/wireless/microchip/wilc1000/cfg80211.c
+index 6f3245a43aef..30d57f4007cc 100644
+--- a/drivers/net/wireless/microchip/wilc1000/cfg80211.c
++++ b/drivers/net/wireless/microchip/wilc1000/cfg80211.c
+@@ -233,6 +233,7 @@ struct wilc_vif *wilc_get_wl_to_vif(struct wilc *wl)
+ }
+ 
+ static int set_channel(struct wiphy *wiphy,
++		       struct net_device *dev,
+ 		       struct cfg80211_chan_def *chandef)
+ {
+ 	struct wilc *wl = wiphy_priv(wiphy);
+@@ -1430,7 +1431,7 @@ static int start_ap(struct wiphy *wiphy, struct net_device *dev,
+ 	struct wilc_vif *vif = netdev_priv(dev);
+ 	int ret;
+ 
+-	ret = set_channel(wiphy, &settings->chandef);
++	ret = set_channel(wiphy, dev, &settings->chandef);
+ 	if (ret != 0)
+ 		netdev_err(dev, "Error in setting channel\n");
+ 
+diff --git a/include/net/cfg80211.h b/include/net/cfg80211.h
+index 802ea3080d0b..43ffba8c166d 100644
+--- a/include/net/cfg80211.h
++++ b/include/net/cfg80211.h
+@@ -4513,6 +4513,7 @@ struct cfg80211_ops {
+ 					     struct ieee80211_channel *chan);
+ 
+ 	int	(*set_monitor_channel)(struct wiphy *wiphy,
++				       struct net_device *dev,
+ 				       struct cfg80211_chan_def *chandef);
+ 
+ 	int	(*scan)(struct wiphy *wiphy,
+diff --git a/net/mac80211/cfg.c b/net/mac80211/cfg.c
+index a3c5d4d995db..a3a2c1df8fba 100644
+--- a/net/mac80211/cfg.c
++++ b/net/mac80211/cfg.c
+@@ -907,6 +907,7 @@ static int ieee80211_get_station(struct wiphy *wiphy, struct net_device *dev,
+ }
+ 
+ static int ieee80211_set_monitor_channel(struct wiphy *wiphy,
++					 struct net_device *dev,
+ 					 struct cfg80211_chan_def *chandef)
+ {
+ 	struct ieee80211_local *local = wiphy_priv(wiphy);
+diff --git a/net/wireless/chan.c b/net/wireless/chan.c
+index 0b7e81db383d..b3d648d84fc8 100644
+--- a/net/wireless/chan.c
++++ b/net/wireless/chan.c
+@@ -1389,6 +1389,7 @@ bool cfg80211_reg_can_beacon_relax(struct wiphy *wiphy,
+ EXPORT_SYMBOL(cfg80211_reg_can_beacon_relax);
+ 
+ int cfg80211_set_monitor_channel(struct cfg80211_registered_device *rdev,
++				 struct net_device *dev,
+ 				 struct cfg80211_chan_def *chandef)
+ {
+ 	if (!rdev->ops->set_monitor_channel)
+@@ -1396,7 +1397,7 @@ int cfg80211_set_monitor_channel(struct cfg80211_registered_device *rdev,
+ 	if (!cfg80211_has_monitors_only(rdev))
+ 		return -EBUSY;
+ 
+-	return rdev_set_monitor_channel(rdev, chandef);
++	return rdev_set_monitor_channel(rdev, dev, chandef);
+ }
+ 
+ bool cfg80211_any_usable_channels(struct wiphy *wiphy,
+diff --git a/net/wireless/core.h b/net/wireless/core.h
+index f0a3a2317638..038a3736f6b0 100644
+--- a/net/wireless/core.h
++++ b/net/wireless/core.h
+@@ -535,6 +535,7 @@ static inline unsigned int elapsed_jiffies_msecs(unsigned long start)
+ }
+ 
+ int cfg80211_set_monitor_channel(struct cfg80211_registered_device *rdev,
++				 struct net_device *dev,
+ 				 struct cfg80211_chan_def *chandef);
+ 
+ int ieee80211_get_ratemask(struct ieee80211_supported_band *sband,
+diff --git a/net/wireless/nl80211.c b/net/wireless/nl80211.c
+index 5b9f39d93b04..c64996805341 100644
+--- a/net/wireless/nl80211.c
++++ b/net/wireless/nl80211.c
+@@ -3441,7 +3441,7 @@ static int __nl80211_set_channel(struct cfg80211_registered_device *rdev,
+ 	case NL80211_IFTYPE_MESH_POINT:
+ 		return cfg80211_set_mesh_channel(rdev, wdev, &chandef);
+ 	case NL80211_IFTYPE_MONITOR:
+-		return cfg80211_set_monitor_channel(rdev, &chandef);
++		return cfg80211_set_monitor_channel(rdev, dev, &chandef);
+ 	default:
+ 		break;
+ 	}
+diff --git a/net/wireless/rdev-ops.h b/net/wireless/rdev-ops.h
+index f8f114a8dc02..a8712e27a251 100644
+--- a/net/wireless/rdev-ops.h
++++ b/net/wireless/rdev-ops.h
+@@ -445,11 +445,12 @@ rdev_libertas_set_mesh_channel(struct cfg80211_registered_device *rdev,
+ 
+ static inline int
+ rdev_set_monitor_channel(struct cfg80211_registered_device *rdev,
++			 struct net_device *dev,
+ 			 struct cfg80211_chan_def *chandef)
+ {
+ 	int ret;
+-	trace_rdev_set_monitor_channel(&rdev->wiphy, chandef);
+-	ret = rdev->ops->set_monitor_channel(&rdev->wiphy, chandef);
++	trace_rdev_set_monitor_channel(&rdev->wiphy, dev, chandef);
++	ret = rdev->ops->set_monitor_channel(&rdev->wiphy, dev, chandef);
+ 	trace_rdev_return_int(&rdev->wiphy, ret);
+ 	return ret;
+ }
+diff --git a/net/wireless/trace.h b/net/wireless/trace.h
+index df92ee4d91d1..20ad81c46b1b 100644
+--- a/net/wireless/trace.h
++++ b/net/wireless/trace.h
+@@ -1222,19 +1222,21 @@ TRACE_EVENT(rdev_libertas_set_mesh_channel,
+ );
+ 
+ TRACE_EVENT(rdev_set_monitor_channel,
+-	TP_PROTO(struct wiphy *wiphy,
++	TP_PROTO(struct wiphy *wiphy, struct net_device *netdev,
+ 		 struct cfg80211_chan_def *chandef),
+-	TP_ARGS(wiphy, chandef),
++	TP_ARGS(wiphy, netdev, chandef),
+ 	TP_STRUCT__entry(
+ 		WIPHY_ENTRY
++		NETDEV_ENTRY
+ 		CHAN_DEF_ENTRY
+ 	),
+ 	TP_fast_assign(
+ 		WIPHY_ASSIGN;
++		NETDEV_ASSIGN;
+ 		CHAN_DEF_ASSIGN(chandef);
+ 	),
+-	TP_printk(WIPHY_PR_FMT ", " CHAN_DEF_PR_FMT,
+-		  WIPHY_PR_ARG, CHAN_DEF_PR_ARG)
++	TP_printk(WIPHY_PR_FMT ", " NETDEV_PR_FMT ", " CHAN_DEF_PR_FMT,
++		  WIPHY_PR_ARG, NETDEV_PR_ARG, CHAN_DEF_PR_ARG)
+ );
+ 
+ TRACE_EVENT(rdev_auth,
+diff --git a/net/wireless/wext-compat.c b/net/wireless/wext-compat.c
+index e3acfac7430a..10249637021c 100644
+--- a/net/wireless/wext-compat.c
++++ b/net/wireless/wext-compat.c
+@@ -851,7 +851,7 @@ static int cfg80211_wext_siwfreq(struct net_device *dev,
+ 			ret = -EINVAL;
+ 			break;
+ 		}
+-		ret = cfg80211_set_monitor_channel(rdev, &chandef);
++		ret = cfg80211_set_monitor_channel(rdev, dev, &chandef);
+ 		break;
+ 	case NL80211_IFTYPE_MESH_POINT:
+ 		freq = cfg80211_wext_freq(wextfreq);

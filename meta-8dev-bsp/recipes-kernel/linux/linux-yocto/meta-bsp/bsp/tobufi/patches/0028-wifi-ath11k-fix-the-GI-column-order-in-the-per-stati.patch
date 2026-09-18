@@ -1,0 +1,56 @@
+From 0215b9a4a1819eba267ab132095aefef5e7c48ed Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Edvinas=20Stun=C5=BE=C4=97nas?= <edvinas@8devices.com>
+Date: Mon, 24 Aug 2026 20:56:06 +0000
+Subject: [PATCH] wifi: ath11k: fix the GI column order in the per-station
+ tx_stats
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The tx_stats GI histogram is labelled
+
+	GI %s (0.4us,0.8us,1.6us,3.2us)
+
+but the index it is written at is
+
+	gi = FIELD_GET(RATE_INFO_FLAGS_SHORT_GI, arsta->txrate.flags);
+
+which is a single bit: 0 when the short-GI flag is clear, 1 when it is
+set. Bucket 0 is therefore 0.8 us and bucket 1 is 0.4 us -- the label has
+the first two columns the wrong way round, so every reading of it is
+inverted. The same file already prints the pair in the correct order for
+the HTT peer stats a few lines further down:
+
+	"GI: 0.8us %llu 0.4us %llu 1.6us %llu 3.2us %llu\n"
+
+This is not academic. A station honouring disable_sgi puts all of its
+frames in bucket 0 and reads back as if it were transmitting nothing but
+short GI, which is exactly the opposite of what happened.
+
+Swap the first two column names. Note that buckets 2 and 3 are never
+written at all, since the index is derived from one bit; they are left
+in place rather than removing columns from an established debugfs
+format.
+
+ref: 8devices/software/yocto/meta-8dev-qcs405#713
+
+Signed-off-by: Edvinas Stunžėnas <edvinas@8devices.com>
+Upstream-Status: Pending
+
+---
+ drivers/net/wireless/ath/ath11k/debugfs_sta.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath11k/debugfs_sta.c b/drivers/net/wireless/ath/ath11k/debugfs_sta.c
+index 168879a380cb..87984afd6f28 100644
+--- a/drivers/net/wireless/ath/ath11k/debugfs_sta.c
++++ b/drivers/net/wireless/ath/ath11k/debugfs_sta.c
+@@ -198,7 +198,7 @@ static ssize_t ath11k_dbg_sta_dump_tx_stats(struct file *file,
+ 					 stats->nss[j][0], stats->nss[j][1],
+ 					 stats->nss[j][2], stats->nss[j][3]);
+ 			len += scnprintf(buf + len, size - len,
+-					 " GI %s (0.4us,0.8us,1.6us,3.2us)\n",
++					 " GI %s (0.8us,0.4us,1.6us,3.2us)\n",
+ 					 str[j]);
+ 			len += scnprintf(buf + len, size - len,
+ 					 "  %llu %llu %llu %llu\n",

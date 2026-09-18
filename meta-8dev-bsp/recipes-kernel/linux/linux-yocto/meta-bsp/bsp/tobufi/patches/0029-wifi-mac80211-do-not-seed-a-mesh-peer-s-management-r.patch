@@ -1,0 +1,115 @@
+From 3e1d22bf61dcee996abefb131f522322f733c41a Mon Sep 17 00:00:00 2001
+From: Edvinas Stunzenas <edvinas.stunzenas@gmail.com>
+Date: Wed, 26 Aug 2026 11:48:39 +0000
+Subject: [PATCH] wifi: mac80211: do not seed a mesh peer's management replay
+ counter from the RSC
+
+An 802.11s link can stall for a minute or more after wpa_supplicant restarts
+on one node: both ends report plink ESTAB and unicast keeps flowing, but path
+selection never completes. One side's mpath to the peer sits at
+MESH_PATH_RESOLVING with a zero next hop and its frame queue at the cap, while
+the other side's mpath table stays empty. It clears on its own with no
+userspace event, which makes it look like an MPM or key-exchange problem. It
+is neither.
+
+A mesh peer advertises the receive counter for its group key in the AMPE
+GTKdata Key RSC. That value is sampled from the peer's group key transmit
+counter, which does not track the packet numbers its group-addressed
+management frames actually carry -- the two run as separate sequences and
+drift apart with uptime. ieee80211_key_alloc() seeds all IEEE80211_NUM_TIDS+1
+CCMP replay slots from that one value, including the slot management frames
+use (rx.c sets security_idx = IEEE80211_NUM_TIDS for them). The management
+slot can therefore start ahead of the frames it has to validate, and
+ieee80211_crypto_ccmp_decrypt() then rejects every group-addressed HWMP frame
+from the peer with RX_DROP_U_REPLAY until the peer's counter catches up.
+
+Measured on a two-node mesh with the stall reproduced deliberately: the
+installed counter was 0x1883 while the peer's PREQs carried 0x182C..0x1858,
+and 44 consecutive frames were dropped 1:1 against the key's replay counter
+over 38.8s, with not one reaching mesh_rx_path_sel_frame(). No PREQ means no
+path and no PREP, which is exactly the observed state on both sides. Unicast
+is unaffected because it uses the pairwise key, whose counter is untouched --
+hence a link that looks alive while discovery is dead.
+
+Leave the management slot at zero for a mesh peer's group key. The data slots
+keep the advertised RSC. This gives up replay protection on group-addressed
+robust management frames from that peer, which is the narrowest price that
+removes the stall, and it does not depend on which frames the driver marks
+RX_FLAG_PN_VALIDATED -- with the slot never seeded, the check cannot reject on
+a stale value.
+
+This is a workaround for peers advertising an RSC that does not describe the
+sequence their management frames use. The correct fix is to advertise the
+right value; once peers do, this should be reverted, as it would otherwise
+keep discarding a then-correct RSC.
+
+ref: 8devices/software/yocto/meta-8dev-qcs405#881
+
+Signed-off-by: Edvinas Stunzenas <edvinas@8devices.com>
+Upstream-Status: Backport
+
+---
+ net/mac80211/key.c | 43 +++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 43 insertions(+)
+
+diff --git a/net/mac80211/key.c b/net/mac80211/key.c
+index f5f1eb87797a..bbd7f617b940 100644
+--- a/net/mac80211/key.c
++++ b/net/mac80211/key.c
+@@ -842,6 +842,44 @@ static bool ieee80211_key_identical(struct ieee80211_sub_if_data *sdata,
+ 	return !crypto_memneq(tk_old, tk_new, new->conf.keylen);
+ }
+ 
++/*
++ * A mesh peer advertises the receive counter for its group key in the AMPE
++ * GTKdata Key RSC. That value is sampled from the peer's group key transmit
++ * counter, which does not track the packet numbers its group-addressed
++ * *management* frames actually carry -- the two run as separate sequences and
++ * drift apart. Seeding the management replay slot from the RSC can therefore
++ * start that slot ahead of the frames it has to validate, and every
++ * group-addressed HWMP frame from the peer is then rejected as a replay
++ * (RX_DROP_U_REPLAY) until the peer's counter catches up. No PREQ reaches
++ * mesh_rx_path_sel_frame(), so no path is created and no PREP is sent, while
++ * both ends still report an established peering and unicast traffic -- which
++ * uses the pairwise key -- keeps flowing.
++ *
++ * Leave the management slot at zero for a mesh peer's group key; the data
++ * slots keep the advertised RSC. This gives up replay protection on
++ * group-addressed robust management frames from that peer, which is the
++ * narrowest price that removes the stall.
++ *
++ * This is a workaround for the peer advertising an RSC that does not describe
++ * the sequence its management frames use. The proper fix is to advertise the
++ * right value; once peers do that, this should be reverted.
++ */
++static void ieee80211_mesh_clear_mgmt_replay_ctr(struct ieee80211_key *key)
++{
++	switch (key->conf.cipher) {
++	case WLAN_CIPHER_SUITE_CCMP:
++	case WLAN_CIPHER_SUITE_CCMP_256:
++		memset(key->u.ccmp.rx_pn[IEEE80211_NUM_TIDS], 0,
++		       sizeof(key->u.ccmp.rx_pn[IEEE80211_NUM_TIDS]));
++		break;
++	case WLAN_CIPHER_SUITE_GCMP:
++	case WLAN_CIPHER_SUITE_GCMP_256:
++		memset(key->u.gcmp.rx_pn[IEEE80211_NUM_TIDS], 0,
++		       sizeof(key->u.gcmp.rx_pn[IEEE80211_NUM_TIDS]));
++		break;
++	}
++}
++
+ int ieee80211_key_link(struct ieee80211_key *key,
+ 		       struct ieee80211_link_data *link,
+ 		       struct sta_info *sta)
+@@ -861,6 +899,11 @@ int ieee80211_key_link(struct ieee80211_key *key,
+ 
+ 	mutex_lock(&sdata->local->key_mtx);
+ 
++	/* see ieee80211_mesh_clear_mgmt_replay_ctr() */
++	if (sta && !pairwise &&
++	    sdata->vif.type == NL80211_IFTYPE_MESH_POINT)
++		ieee80211_mesh_clear_mgmt_replay_ctr(key);
++
+ 	if (sta && pairwise) {
+ 		struct ieee80211_key *alt_key;
+ 

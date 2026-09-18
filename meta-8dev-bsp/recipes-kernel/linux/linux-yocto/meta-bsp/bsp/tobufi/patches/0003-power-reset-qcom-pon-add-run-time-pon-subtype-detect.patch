@@ -1,44 +1,14 @@
-From 55ca4d9c514e4d4639e508f14754e09049f524a9 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Edvinas=20Stun=C5=BE=C4=97nas?= <edvinas@8devices.com>
-Date: Fri, 24 Jan 2025 21:26:41 +0000
-Subject: [PATCH 1/2] power: reset: qcom-pon: fix gen2 shift for pms405-pon
-
-The PMS405 used with TobuFi modules has (and reports) gen2 pon.
-
-Upstream-Status: Pending
-Signed-off-by: Edvinas Stunžėnas <edvinas@8devices.com>
----
- drivers/power/reset/qcom-pon.c | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/drivers/power/reset/qcom-pon.c b/drivers/power/reset/qcom-pon.c
-index 1344b361a475..af4e9ec43f01 100644
---- a/drivers/power/reset/qcom-pon.c
-+++ b/drivers/power/reset/qcom-pon.c
-@@ -88,7 +88,7 @@ static int pm8916_pon_probe(struct platform_device *pdev)
- static const struct of_device_id pm8916_pon_id_table[] = {
- 	{ .compatible = "qcom,pm8916-pon", .data = (void *)GEN1_REASON_SHIFT },
- 	{ .compatible = "qcom,pm8941-pon", .data = (void *)NO_REASON_SHIFT },
--	{ .compatible = "qcom,pms405-pon", .data = (void *)GEN1_REASON_SHIFT },
-+	{ .compatible = "qcom,pms405-pon", .data = (void *)GEN2_REASON_SHIFT },
- 	{ .compatible = "qcom,pm8998-pon", .data = (void *)GEN2_REASON_SHIFT },
- 	{ .compatible = "qcom,pmk8350-pon", .data = (void *)GEN2_REASON_SHIFT },
- 	{ }
--- 
-2.25.1
-
-
-From df2b98306ab9159ad2fedd3af9a5c0dca47df639 Mon Sep 17 00:00:00 2001
+From fbfe80b0921f735de9d02726cdcc3897961936a7 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Edvinas=20Stun=C5=BE=C4=97nas?= <edvinas@8devices.com>
 Date: Fri, 24 Jan 2025 21:43:18 +0000
-Subject: [PATCH 2/2] power: reset: qcom-pon: add run-time pon subtype
- detection
+Subject: [PATCH] power: reset: qcom-pon: add run-time pon subtype detection
 
 Enable run-time pon subtype detection for backwards gen1 and get2
 shifts support on pms405 pon.
 
+Signed-off-by: Edvinas Stunzenas <edvinas@8devices.com>
 Upstream-Status: Pending
-Signed-off-by: Edvinas Stunžėnas <edvinas@8devices.com>
+
 ---
  drivers/power/reset/qcom-pon.c | 19 ++++++++++++++++++-
  1 file changed, 18 insertions(+), 1 deletion(-)
@@ -100,6 +70,3 @@ index af4e9ec43f01..6cc45bc25ba8 100644
  	{ .compatible = "qcom,pm8998-pon", .data = (void *)GEN2_REASON_SHIFT },
  	{ .compatible = "qcom,pmk8350-pon", .data = (void *)GEN2_REASON_SHIFT },
  	{ }
--- 
-2.25.1
-

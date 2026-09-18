@@ -1,4 +1,4 @@
-From 4f8d32a7c30f6af095ba99a60dd182ec5363985f Mon Sep 17 00:00:00 2001
+From c511830845119c40be059c49917e61066de0b590 Mon Sep 17 00:00:00 2001
 From: Jack Pham <jackp@codeaurora.org>
 Date: Fri, 16 Mar 2018 14:03:52 -0700
 Subject: [PATCH] extcon: usb-gpio: Add support for optional VBUS output enable

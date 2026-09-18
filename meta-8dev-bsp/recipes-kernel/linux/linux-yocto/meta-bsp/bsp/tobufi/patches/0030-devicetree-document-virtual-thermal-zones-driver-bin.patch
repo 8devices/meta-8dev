@@ -1,0 +1,594 @@
+From 879a46c15fc3b7f00f509516148d91d2fc31de97 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Giedr=C4=97=20=C5=A0imk=C5=ABnait=C4=97?=
+ <giedre.s@8devices.com>
+Date: Thu, 17 Sep 2026 13:47:33 +0000
+Subject: [PATCH] devicetree: document virtual-thermal-zones driver binding.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ref.: 8devices/software/yocto/meta-8dev-qcs405#799
+
+The binding listed the properties but not the behaviour a device tree
+author has to know in order to use them safely.  Several of the traps
+are silent at probe and only show up as a zone that does not throttle.
+
+Document what the driver actually does:
+
+ - A source may itself be a virtual zone, so zones can be chained.
+   Dependency cycles and chains deeper than eight are rejected.
+ - 'calculate' is ignored for a single-source zone, and is the one
+   string property matched case-sensitively - unlike 'thermal-governor'
+   and a trip's 'type', which the kernel matches case insensitively.  A
+   misspelling therefore falls back to 'max', the least forgiving
+   method, which is the opposite of what someone asking for 'median'
+   wanted.
+ - 'rolling-average' stops filtering altogether once 'polling-delay'
+   exceeds forty times 'sample-interval-ms': the window is restarted on
+   every ordinary poll and never holds more than one sample.
+ - A zero 'polling-delay-passive' is overridden only when
+   'polling-delay' is non-zero.  With both at zero the zone is never
+   polled, and its trips are evaluated only when something else prompts
+   an update - not on a plain read of 'temp', and not on a 'policy'
+   write.
+ - A correction large enough to saturate the reported temperature reads
+   above every positive trip, a 'critical' one included, and a critical
+   trip powers the board off rather than driving a cooling device.
+
+Also record what cannot be checked ahead of time: these nodes live
+under /thermal-zones, which thermal-zones.yaml claims with
+additionalProperties: false, so dt_binding_check never sees them and a
+typo is caught only by the driver at probe.
+
+Signed-off-by: Giedrė Šimkūnaitė <giedre.s@8devices.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+(cherry picked from commit 4c4dd6cecde8cee5c59bb15af55287c67e76fff7)
+Upstream-Status: Pending
+
+---
+ .../thermal/virtual-thermal-zone.yaml         | 432 +++++++++++++++++-
+ 1 file changed, 410 insertions(+), 22 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/thermal/virtual-thermal-zone.yaml b/Documentation/devicetree/bindings/thermal/virtual-thermal-zone.yaml
+index e902c2615a18..9edc6d97b9d0 100644
+--- a/Documentation/devicetree/bindings/thermal/virtual-thermal-zone.yaml
++++ b/Documentation/devicetree/bindings/thermal/virtual-thermal-zone.yaml
+@@ -30,6 +30,143 @@ description: |
+   own platform device and automatically discovers all virtual thermal zone
+   definitions.
+ 
++  A source may be a real thermal zone or another virtual zone. The driver
++  resolves the dependency graph from the device tree before registering
++  anything and registers zones in order of increasing depth, so a source
++  always exists before the zones that consume it; the order of the nodes in
++  the device tree does not matter. Dependency cycles, including a zone that
++  lists itself, and chains more than 8 zones deep are rejected.
++
++  At most 32 virtual zones are registered. Any beyond that are dropped with a
++  message, in device tree order. A zone that names a dropped one as a source is
++  not rejected outright: the driver cannot tell it apart from a real zone that
++  has yet to register, so it waits out the deferred-probe timeout before
++  skipping it.
++
++  The thermal core rejects a zone name of 20 characters or more outright, so a
++  virtual zone node name must be at most 19 characters. The driver drops a
++  longer one with a message rather than let registration fail for it.
++
++  Zone names are matched case-insensitively, so two nodes whose names differ
++  only in case are one zone as far as the framework is concerned. Both
++  still register and both still work, but neither can then be named in another
++  zone's source-thermal-zones - the lookup matches both and fails - and
++  userspace that identifies a zone by its type cannot tell them apart. The
++  driver warns about this too.
++
++  The cost falls on the consumer rather than on the colliding pair. A zone
++  naming a collided name as a source cannot tell -EEXIST from a source that
++  has not registered yet, so it defers for the whole deferred-probe window
++  and is then skipped with a message about the source not being registered -
++  which points at the wrong thing. A collision between a virtual zone and a
++  sensor-backed one also breaks that real zone for every other in-kernel user
++  of its name, not just for this driver.
++
++  A virtual zone node must not carry 'thermal-sensors'. thermal_of claims a
++  zone on that property alone and never looks at 'compatible', so a node with
++  both would be registered twice - once reading the sensor and once aggregating
++  - under one name. The driver ignores such a node and says so.
++
++  IMPORTANT - where these nodes may be placed
++
++    Put every virtual zone node AFTER all sensor-backed zones under
++    /thermal-zones. A sensor whose zone appears after a virtual zone in device
++    tree order does not get registered at all: its real thermal zone silently
++    fails to appear, and the driver cannot prevent that.
++
++  A virtual zone node deliberately has no 'thermal-sensors' property, and
++  thermal_of does not tolerate such a child. of_thermal_zone_find() in Linux 6.6
++  walks every available child of /thermal-zones looking for the zone that
++  belongs to the sensor being registered, and on the first child without
++  'thermal-sensors' it logs "<node>: missing thermal sensor" and abandons the
++  entire search instead of skipping that node. Every sensor whose own zone had
++  not been reached yet therefore loses its zone.
++
++  Adding the nodes with &{/thermal-zones} { ... }, which is how a board normally
++  adds them, appends them and is safe. Declaring a virtual zone ahead of the
++  SoC's own zones - in a .dtsi included before the SoC one, or by deleting and
++  re-adding a zone - is not.
++
++  A sensor that has no zone at all is a related, harmless but misleading case:
++  its search runs off the end of the list and logs that message against the
++  first virtual zone it reaches, which had nothing to do with it.
++
++  This is a thermal_of limitation, not something this binding or the driver can
++  guard against; the nodes are already in the list by the time thermal_of walks
++  it.
++
++  The driver becomes a device-link consumer of the platform device behind each
++  real source zone, so unbinding a sensor driver unbinds this driver first and
++  every virtual zone disappears with it, rather than being left pointing at
++  freed zones.
++
++  Note what "every" means there. This driver registers one platform device for
++  the whole board, so every device link is consumer-side from that single
++  device: unbinding any one sensor driver takes down all of the virtual zones,
++  including ones that never named that sensor as a source. They come back when
++  the provider rebinds, but they are registered afresh - filter state is lost,
++  and the thermal_zoneN numbers come from an ID allocator, so
++  /sys/class/thermal/thermal_zoneN paths are not stable across an unbind and
++  rebind. Anything that remembers a zone by path rather than by 'type' has to
++  cope with that.
++
++  The probe is also all or nothing: if any zone has to wait for a source, the
++  whole set is rolled back and retried. Three consequences worth planning for.
++  Built into the kernel, one source that is described in the device tree but
++  never registers holds back every virtual zone until the deferred-probe
++  timeout expires - ten seconds by default - so nothing that enumerates
++  thermal zones early in boot will see them. Loaded as a module after boot,
++  there is no grace period at all: deferred probing has already ended, so any
++  source not already registered at modprobe time is dropped on the first
++  attempt rather than waited for. And a source whose provider binds later does
++  not bring its zone back, because a source that could not be linked leaves
++  nothing behind to trigger a re-probe; that needs a manual unbind and bind of
++  this driver.
++
++  One kind of source cannot be tied to the driver this way: one whose provider
++  sits on a bus other than the platform bus, such as an SPMI, I2C or SPI sensor,
++  because the provider is looked up on the platform bus only. The driver warns
++  for each such source. For those the zone is safe until that sensor driver is
++  unbound and unsafe from then on, so avoid building a virtual zone on a sensor
++  whose driver is expected to be unbound at runtime.
++
++  If none of a zone's sources can be read the temperature read fails, and the
++  thermal core then leaves the zone's last good temperature in place and keeps
++  driving the trips from it. A zone whose sources have all died therefore
++  freezes at its last reading rather than reporting a failure. The driver logs
++  this, rate limited, with a count of consecutive failed reads.
++
++  The core keeps its own message quiet. update_temperature() warns once per
++  poll, unlimited, for any read failure that is not -EAGAIN - which on a zone
++  whose sources had all died would mean one line per poll, at whichever of the
++  two delays is in force ('polling-delay', unless a governor has put the zone
++  in the passive regime, and only step_wise and power_allocator ever do that),
++  for as long as they stayed dead. The driver returns -EAGAIN for exactly this
++  reason, so its own rate-limited line - which carries a count of consecutive
++  failed reads - is the only report you get.
++
++  A partial failure is the opposite, and quieter than it should be: a source
++  that cannot be read is dropped from the aggregate with only a pr_debug, and
++  the zone keeps reporting a plausible temperature computed from whichever
++  sources still answer. With 'max' that reading can only be too low, and the
++  trips that depend on it stop firing, with nothing in the log to say why.
++
++  A virtual zone registers with 'no_hwmon' set, so unlike a sensor-backed zone
++  it gets no /sys/class/hwmon entry. It is readable through
++  /sys/class/thermal/thermal_zoneN/temp like any other zone.
++
++  Validation
++
++    These nodes do not pass 'make dt_binding_check' or 'make dtbs_check', and
++    cannot be made to without changing thermal-zones.yaml. That schema owns
++    every child of /thermal-zones: it requires 'thermal-sensors', 'trips',
++    'polling-delay' and 'polling-delay-passive' on each one, sets
++    additionalProperties: false so 'compatible' and 'source-thermal-zones' are
++    rejected, and restricts node names to the form '<name>-thermal'. A virtual
++    zone contradicts the first two by design. This is a tooling gap rather than
++    a defect in the device tree: the kernel parses these nodes exactly as
++    described here.
++
+ properties:
+   compatible:
+     const: virtual-thermal-zone
+@@ -37,8 +174,19 @@ properties:
+   source-thermal-zones:
+     $ref: /schemas/types.yaml#/definitions/string-array
+     description: |
+-      Array of thermal zone names to aggregate. The driver will look up these
+-      thermal zones by name and read their temperatures.
++      Array of thermal zone names to aggregate. The driver looks these zones
++      up by name and reads their temperatures. A name may refer to a real
++      thermal zone or to another virtual zone; see the chaining rules above.
++
++      Names are matched the way the thermal core matches them: case
++      insensitively and in full. There is no prefix matching - an
++      abbreviated or over-long name resolves to nothing. Listing the same
++      zone more than once makes the averaging methods count it more than
++      once; the driver warns about it but does not reject it.
++
++      The 32-entry cap is a schema limit. The driver does not enforce it and
++      sizes every allocation from the actual count, so a longer list works;
++      it simply is not valid against this binding.
+     minItems: 1
+     maxItems: 32
+ 
+@@ -64,9 +212,31 @@ properties:
+       - average: Arithmetic mean of all sources
+       - median: Median value of all sources
+       - mean: Same as average
+-      - weighted-average: Weighted average (currently equal weights)
+-      - rolling-average: Moving average over last 5 readings
+-      - exponential-average: Exponential moving average (alpha=0.3)
++      - weighted-average: Mean weighted by 'source-weights'. A source that
++        fails to read is dropped together with its weight, so the remaining
++        weights stay matched to their zones
++      - rolling-average: Boxcar average over the last 5 samples, one sample
++        per 'sample-interval-ms'. See that property for what a long gap
++        between reads does to the window
++      - exponential-average: Exponential moving average with a time constant
++        of 'time-constant-ms'. The smoothing factor is derived from the
++        elapsed time, so the result does not depend on how often the zone is
++        read
++
++      Those names are matched exactly, case included - unlike
++      'thermal-governor' and a trip's 'type', both of which the kernel matches
++      case insensitively. Any other value, a differing case among them, is
++      reported in the log and the zone falls back to 'max'. That fallback is
++      worth knowing about rather than discovering: 'max' is the least
++      forgiving of these methods, where one sensor reading high carries the
++      zone on its own, which is the opposite of what someone asking for
++      'median' wanted. (A single-source zone never reaches this: it ignores
++      the property altogether, as above.)
++
++      The two filtering methods combine the sources before they filter: each
++      sample is the plain average of the sources that could be read, and it is
++      that average which the boxcar or the exponential moving average is
++      applied to. They do not filter each source separately.
+     enum:
+       - max
+       - min
+@@ -77,17 +247,113 @@ properties:
+       - rolling-average
+       - exponential-average
+ 
++  source-weights:
++    $ref: /schemas/types.yaml#/definitions/uint32-array
++    description: |
++      One weight per entry of 'source-thermal-zones', used by
++      calculate = "weighted-average". Each weight is at most 65535; a zone
++      naming a larger one is rejected, not clamped.
++
++      If the property is absent every source weighs the same. If the weights
++      of the sources that could be read sum to zero, the plain average is
++      used instead. Any other calculation method ignores the property and
++      the driver warns about it.
++    items:
++      maximum: 65535
++    minItems: 1
++    maxItems: 32
++
++  time-constant-ms:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description: |
++      Time constant of calculate = "exponential-average", in milliseconds.
++      For a step of dt milliseconds the smoothing factor is
++      dt / (time-constant-ms + dt). A gap longer than eight time constants
++      reseeds the average rather than integrating across it.
++
++      The arithmetic is integer, so the average settles to within roughly
++      (time-constant-ms + dt) / dt millidegrees of the input rather than
++      converging exactly - a few millidegrees at the default, far below what a
++      sensor resolves.
++
++      The bounds below describe a valid device tree. A value outside them is
++      clamped into range by the driver rather than rejected, so an out-of-spec
++      tree still gets defined behaviour.
++    minimum: 10
++    maximum: 600000
++    default: 3000
++
++  sample-interval-ms:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description: |
++      Minimum spacing between samples of calculate = "rolling-average", in
++      milliseconds. A read that arrives sooner returns the previous result
++      unchanged, so the window always spans a known amount of time no matter
++      how often the zone is read. Defaults to the value of 'polling-delay'.
++      As with 'time-constant-ms', a value outside the bounds below is clamped
++      by the driver rather than rejected.
++
++      A gap of more than 40 times this value between two samples restarts the
++      window rather than pushing into it, the way 'time-constant-ms' reseeds
++      the exponential average. Without that, readings taken after an idle
++      period would be blended with temperatures from before it. The zone is
++      briefly unfiltered afterwards: the first reading past the restart is
++      reported raw and the next four are averaged over a window that is still
++      filling.
++
++      That threshold is measured from the last sample the filter accepted, so
++      between samples it is simply how often the zone is read. Setting this
++      property to less than a fortieth of the rate the zone is actually read
++      at therefore restarts the window on every read, leaving one sample in it
++      and making 'rolling-average' behave as a pass-through with no warning.
++      It takes a tree asking for a window shorter than the interval it reads
++      at, which is self-contradictory - with one exception that is easy to
++      reach by accident. Leaving the property out normally avoids the problem,
++      because it then follows 'polling-delay'; but 'polling-delay = <0>' means
++      the zone is read on demand only, and 0 is clamped up to 10, giving a
++      restart threshold of 400 ms. An on-demand zone is almost always read
++      less often than that, so it restarts on every read and does not filter
++      at all. A zone that wants both on-demand reads and a working
++      'rolling-average' must set this property explicitly, to something near
++      the rate it is actually read at.
++    minimum: 10
++    maximum: 600000
++
+   polling-delay-passive:
+     $ref: /schemas/types.yaml#/definitions/uint32
+     description: |
+       Polling interval in milliseconds when any trip point is active.
+       If not specified, defaults to 100 ms.
+ 
++      A value of 0 is overridden, unless 'polling-delay' is 0 as well - a zone
++      that asks for no polling at all is left alone, silently, because there
++      is no non-zero delay to fall back to and it is read on demand instead.
++      Nothing polls such a zone, so its trips are evaluated only when
++      something else prompts an update: the zone being enabled, by probe or by
++      a 'mode' write, or a cooling device binding to it. Never on a plain read
++      of 'temp', and not on a 'policy' write either - changing the governor
++      swaps it and re-evaluates nothing.
++
++      With a non-zero 'polling-delay' the override applies, and this is why:
++      the thermal core polls at the passive interval once a governor marks
++      the zone passive and has no fallback to 'polling-delay' there, and a
++      zero interval cancels the poll work outright - after which nothing
++      re-arms it for a zone that has no sensor driver of its own, so the
++      trips would stop being evaluated for good while reads carried on
++      answering. The driver warns and uses 'polling-delay' instead.
++
++      The thermal core takes this as a signed int, so a value above 2147483647
++      arrives negative and msecs_to_jiffies() turns it into MAX_JIFFY_OFFSET,
++      which stops the zone polling altogether.
++    maximum: 2147483647
++
+   polling-delay:
+     $ref: /schemas/types.yaml#/definitions/uint32
+     description: |
+       Polling interval in milliseconds when no trip points are active.
+-      If not specified, defaults to 1000 ms.
++      If not specified, defaults to 1000 ms. The same signed-int limit as
++      'polling-delay-passive' applies.
++    maximum: 2147483647
+ 
+   sustainable-power:
+     $ref: /schemas/types.yaml#/definitions/uint32
+@@ -97,14 +363,78 @@ properties:
+   coefficients:
+     $ref: /schemas/types.yaml#/definitions/uint32-array
+     description: |
+-      Thermal coefficients [slope, offset] for temperature calculation.
++      Linear correction <slope offset> applied to the aggregated temperature:
++      the zone reports slope * aggregate + offset, in millidegree Celsius.
++      Defaults to <1 0>, which leaves the aggregate unchanged. Two values are
++      expected; the driver reads the first two and ignores anything after
++      them, though the schema accepts no more than two. The slope must be
++      within +/-65535 and the offset within +/-1000000 (1000 degrees C); a
++      zone outside those bounds is rejected. The corrected value is clamped
++      to the int the thermal core stores, so it cannot overflow.
++
++      Device tree cells are unsigned, so a negative slope or offset is written
++      as its two's-complement value - dtc accepts <(-2000)> for that.
++
++      Three things to know. A longer array is accepted and silently truncated
++      to the first two cells, so the thermal-zones.yaml convention of one
++      coefficient per sensor plus a constant parses here and quietly means
++      something else; the schema forbids it but these nodes cannot be
++      validated. The slope is an integer multiplier, so a gain below 1 cannot
++      be expressed - scale the offset instead, or leave the correction out.
++      And <0 X> is accepted: the zone then reports X for ever, regardless of
++      its sources.
++
++      A slope of zero or below does not disturb how the two filtering methods
++      report their direction to a governor. The driver tracks that direction
++      before the correction is applied and then maps it onto the corrected
++      value: the correction is linear, so a positive slope keeps the
++      direction, a negative slope reverses it, and a zero slope pins the zone
++      to 'offset' and so reports stable. A governor therefore sees the
++      direction of the temperature it is actually comparing against the trip.
++
++      The exception is a correction big enough to reach the clamp mentioned
++      above - a slope of 65535 against a warm aggregate already exceeds the
++      int - where the reported temperature is pinned at the limit while the
++      direction carries on moving. The governor still acts consistently with
++      what the zone reports - it drives cooling up at the top of the range and
++      releases it at the bottom - so the two merely stop agreeing, and a zone
++      corrected that far is no longer measuring anything. How far up it gets
++      depends on the governor: 'bang_bang' goes straight to its cooling state,
++      while 'step_wise' climbs only while the trend reports rising and holds
++      where it is once the trend reads stable.
++
++      One consequence is not merely a disagreement. A zone pinned at the top
++      of the range reads above every positive trip, a 'critical' one included,
++      and a critical trip that fires powers the board off - the thermal core
++      shuts the machine down rather than calling a cooling device. A slope of
++      65535 reaches the clamp at an aggregate of about 33 degrees C, so a
++      correction entered by mistake can take the board down on the next poll.
++      Check the coefficients on any zone that carries a critical trip.
+     minItems: 2
+     maxItems: 2
+ 
+   thermal-governor:
+     $ref: /schemas/types.yaml#/definitions/string
+     description: |
+-      Name of the thermal governor to use for this zone.
++      Name of the thermal governor to use for this zone, matched case
++      insensitively. The driver accepts only the governors the running
++      kernel was actually built with. Anything else - a typo, or a real
++      governor this build does not have - makes the driver warn and leave
++      the zone on the kernel's default governor. The zone still registers
++      and still works; it simply is not throttled the way this node asked
++      for.
++
++      That silent fallback is the likely outcome for most of the names
++      below, because a kernel is usually built with only one or two
++      governors while this list names five. Nothing fails at boot, so
++      confirm the governor was taken rather than assuming it: the driver
++      prints the effective governor for every zone it registers, the zone's
++      own sysfs 'policy' attribute reports it on a running system, and
++      /sys/class/thermal/thermal_zone0/available_policies lists what the
++      kernel has. When writing the tree, the CONFIG_THERMAL_GOV_* symbols
++      for the kernel this tree is for are the same information. The
++      examples below are not a statement that every governor they name is
++      available.
+     enum:
+       - step_wise
+       - fair_share
+@@ -116,7 +446,10 @@ properties:
+     type: object
+     description: |
+       Trip points for the virtual thermal zone.
+-      Maximum 64 trip points supported (limited by thermal subsystem bitmask).
++      At most 31 trip points; the thermal core rejects a zone with more.
++      A trip whose 'temperature' is 0 is disabled by the thermal core as it
++      registers the zone, without a message, so 0 cannot be used to mean
++      'trip at freezing'.
+     patternProperties:
+       "^[a-zA-Z0-9\\-_]+$":
+         type: object
+@@ -131,7 +464,27 @@ properties:
+ 
+           type:
+             $ref: /schemas/types.yaml#/definitions/string
+-            description: Trip point type.
++            description: |
++              Trip point type.
++
++              'active' and 'passive' drive the cooling devices bound to the
++              trip through cooling-maps. These are what a virtual zone is
++              normally for.
++
++              'hot' takes no in-kernel action on a virtual zone. The core
++              calls the zone's .hot callback for this type and this driver
++              provides none, and a 'hot' trip never reaches a governor, so it
++              drives no cooling device and does not change the polling window
++              either. What it still does is generate the netlink trip-crossed
++              events the core sends for every trip type, which a userspace
++              thermal daemon can act on. It is accepted; the driver warns.
++
++              'critical' powers the board off: the core installs
++              thermal_zone_device_critical(), which calls
++              hw_protection_shutdown(). Consider the calculation method before
++              putting one on an aggregate - with the default calculate = "max"
++              a single faulty sensor reading high is enough to shut the board
++              down, whereas "median" rejects one outlier.
+             enum:
+               - active
+               - passive
+@@ -183,7 +536,7 @@ examples:
+   - |
+     // Virtual thermal zone definitions
+     thermal-zones {
+-        cpuss-max-step {
++        cpussmax-thermal {
+             compatible = "virtual-thermal-zone";
+             source-thermal-zones = "cluster0-thermal", "cluster1-thermal",
+                                    "cpu0-thermal", "cpu1-thermal";
+@@ -201,16 +554,10 @@ examples:
+                     type = "passive";
+                 };
+ 
+-                cpuss_hot: cpuss-hot {
++                cpuss_escalate: cpuss-escalate {
+                     temperature = <85000>;
+                     hysteresis = <5000>;
+-                    type = "hot";
+-                };
+-
+-                cpuss_critical: cpuss-critical {
+-                    temperature = <95000>;
+-                    hysteresis = <0>;
+-                    type = "critical";
++                    type = "passive";
+                 };
+             };
+ 
+@@ -222,14 +569,14 @@ examples:
+                 };
+ 
+                 map1 {
+-                    trip = <&cpuss_hot>;
++                    trip = <&cpuss_escalate>;
+                     cooling-device = <&CPU0 4 8>;
+                     contribution = <2048>;
+                 };
+             };
+         };
+ 
+-        gpu-average {
++        gpuavg-thermal {
+             compatible = "virtual-thermal-zone";
+             source-thermal-zones = "gpu0-thermal", "gpu1-thermal";
+             calculate = "average";
+@@ -256,7 +603,7 @@ examples:
+         // Single-source virtual zone with implicit 'none' calculation method
+         // Useful for adding cooling policies to existing thermal zones
+         // without modifying the original zone definition
+-        wifi-virtual {
++        wifivirt-thermal {
+             compatible = "virtual-thermal-zone";
+             source-thermal-zones = "wifi-thermal";
+             // calculate defaults to 'none' for single source
+@@ -279,5 +626,46 @@ examples:
+                 };
+             };
+         };
++
++        // Weighted aggregate: the cluster sensor counts double
++        socwavg-thermal {
++            compatible = "virtual-thermal-zone";
++            source-thermal-zones = "cluster-thermal", "cpu0-thermal",
++                                   "cpu1-thermal";
++            calculate = "weighted-average";
++            source-weights = <2 1 1>;
++            coefficients = <1 0>;
++            polling-delay-passive = <100>;
++            polling-delay = <1000>;
++
++            trips {
++                socwavg_passive: socwavg-passive {
++                    temperature = <80000>;
++                    hysteresis = <5000>;
++                    type = "passive";
++                };
++            };
++        };
++
++        // Chained zone: 'socwavg-thermal' is itself a virtual zone, and is
++        // registered before this one whatever the node order here. The
++        // exponential average is expressed in real time, so reading this
++        // zone from sysfs does not disturb it.
++        socema-thermal {
++            compatible = "virtual-thermal-zone";
++            source-thermal-zones = "socwavg-thermal", "cpu2-thermal";
++            calculate = "exponential-average";
++            time-constant-ms = <5000>;
++            polling-delay-passive = <250>;
++            polling-delay = <1000>;
++
++            trips {
++                socema_passive: socema-passive {
++                    temperature = <90000>;
++                    hysteresis = <5000>;
++                    type = "passive";
++                };
++            };
++        };
+     };
+ 

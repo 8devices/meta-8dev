@@ -1,0 +1,3692 @@
+From 1e955d83205db6df98466feec74070b6e2026238 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Giedr=C4=97=20=C5=A0imk=C5=ABnait=C4=97?=
+ <giedre.s@8devices.com>
+Date: Thu, 17 Sep 2026 13:47:33 +0000
+Subject: [PATCH] thermal: virtual-thermal-zones fix lock nesting, DT ordering
+ and filter time base.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ref.: 8devices/software/yocto/meta-8dev-qcs405#799
+
+With CONFIG_PROVE_LOCKING enabled, registering a virtual thermal zone
+produces a "possible recursive locking detected" splat:
+
+  thermal_zone_device_set_mode()     takes the virtual zone's tz->lock
+    __thermal_zone_device_update()
+      __thermal_zone_get_temp()
+        virt_tz_read_temp()
+          thermal_zone_get_temp()    takes a source zone's tz->lock
+
+The two zones are different objects, but every zone the thermal core
+registers has its tz->lock initialised at the same site, so they share
+one lock class and lockdep cannot tell the nesting from recursion.  The
+report is a false positive for the shipped device tree, but it is not
+harmless: printing it calls debug_locks_off(), which disables lock
+validation for the rest of the boot.
+
+The nesting itself is correct and unavoidable - it happens on every
+poll and every sysfs read, not just at probe - so describe it to
+lockdep instead of restructuring around it.  That is only honest if the
+nesting is bounded and acyclic, which the driver intended but did not
+enforce: the "virtual zones cannot be used as sources" check sat in the
+IS_ERR() branch of the source lookup, so it was reached only when the
+referenced virtual zone was not registered yet.  Whether a virtual
+source was rejected or silently accepted therefore depended on the
+order of the nodes in the device tree.
+
+Resolve the dependency graph in DT before registering anything:
+
+ - Collect every virtual zone, resolve the virtual-to-virtual edges
+   depth-first, and reject dependency cycles (including a zone that
+   lists itself) and chains deeper than MAX_LOCKDEP_SUBCLASSES allows.
+ - Register in order of increasing depth, so a virtual zone always
+   exists before the zones that use it as a source.  Chaining becomes a
+   supported configuration rather than an order-dependent accident, and
+   a missing virtual source is now a reason to defer, not to reject.
+ - Re-key each virtual zone's tz->lock with a private lock class and a
+   subclass equal to its depth.  Edges always run from higher depth to
+   lower, so the class graph is acyclic by construction and lockdep can
+   validate the nesting.
+ - Tear zones down in reverse depth order, so a consumer is
+   unregistered before the source it reads.
+
+Drop virt->lock: virt_tz_read_temp() is only ever reached through
+__thermal_zone_get_temp(), which requires tz->lock, so the core already
+serialises the readers of one zone.  With that established, the scratch
+arrays can be allocated once per zone at registration, which also takes
+the kcalloc()/kmemdup() out of the temperature path.
+
+The calculation methods needed fixing independently of the locking:
+
+ - rolling-average and exponential-average advanced their state once
+   per ->get_temp() call, so their behaviour depended on how often the
+   zone was read - by the core's polling, by every sysfs read, and,
+   where a virtual zone is a source, by its consumers too.  Give both a
+   real time base: the exponential average now derives its smoothing
+   factor from the elapsed time (alpha = dt / (tau + dt)), which is
+   correct at any call rate, and the rolling average is rate-limited to
+   a sample interval, since a boxcar average only means anything over
+   evenly spaced samples.  Both are configurable via time-constant-ms
+   and sample-interval-ms.
+ - weighted-average silently returned the plain average.  Implement it
+   with an optional source-weights property, and carry each sample's
+   weight beside it so that a source which fails to read does not shift
+   the remaining weights onto the wrong zones.
+ - coefficients was parsed into thermal_zone_params but never applied,
+   because the core only stores slope/offset for drivers to use.  Apply
+   it to the aggregate; the defaults (1, 0) leave the result unchanged.
+
+Source lifetime is now tied to the providers.  The driver holds bare
+pointers to its source zones across polls, and devres frees those zones
+when a provider unbinds, so take a device link to each provider as the
+zone registers.  A link that cannot be made - the provider is
+unbinding, is in the middle of its own ->probe, was freed under us, or
+could not be allocated - discards the whole attempt rather than leaving
+a registered zone with no protection.
+
+Report a direction to the governors.  get_tz_trend() otherwise compares
+the last two temperatures, which is wrong for a rate-limited filter,
+and wrong for any zone that has gone blind: update_temperature() leaves
+its last two good values in place on a failed read, so the comparison
+reports one fixed direction for ever and step_wise walks the cooling
+state down to THERMAL_NO_TARGET on a zone that can no longer see
+anything.  Report the filter's own direction, mapped through the sign
+of the correction, and report stable whenever the last read found no
+source at all.
+
+A read that finds no source now returns -EAGAIN rather than -ENODATA.
+update_temperature() warns once per poll, unlimited, for every error
+except -EAGAIN, so a zone whose sources have all died filled the log at
+the polling rate; -EAGAIN is the code the core offers for exactly this
+case and what imx, sun8i, qoriq and rockchip return for a bad reading.
+
+Match a trip's "type" case-insensitively, as thermal_of does.  It is
+thermal-zones.yaml's property rather than this driver's, and rejecting
+a spelling the core accepts cost the whole zone, its trips and its
+cooling maps.
+
+Reject a governor name the running kernel was not built with before it
+reaches the core: __find_governor() would return NULL,
+thermal_set_governor() would succeed, and the zone would finish
+registering with no governor at all - which policy_show() and the
+netlink handler dereference without a NULL test.
+
+Builds clean with CONFIG_PROVE_LOCKING both enabled and disabled.
+
+Signed-off-by: Giedrė Šimkūnaitė <giedre.s@8devices.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+(cherry picked from commit 1bf7d79178c13677116f22756f8a6063330eceaa)
+Upstream-Status: Pending
+
+---
+ drivers/thermal/virtual-thermal-zones.c | 2909 +++++++++++++++++++----
+ 1 file changed, 2401 insertions(+), 508 deletions(-)
+
+diff --git a/drivers/thermal/virtual-thermal-zones.c b/drivers/thermal/virtual-thermal-zones.c
+index b3a84d3d576c..b2817ada6473 100644
+--- a/drivers/thermal/virtual-thermal-zones.c
++++ b/drivers/thermal/virtual-thermal-zones.c
+@@ -12,15 +12,56 @@
+  * This driver registers virtual thermal zones from device tree nodes with
+  * compatible = "virtual-thermal-zone". Virtual zones aggregate
+  * temperatures from multiple source thermal zones using configurable calculation methods.
++ *
++ *
++ * IMPORTANT - where virtual zone nodes may be placed in the device tree
++ *
++ *   Put every virtual zone node AFTER all sensor-backed zones under
++ *   /thermal-zones.  A sensor whose zone appears after a virtual zone in device
++ *   tree order does not get registered at all - its real thermal zone silently
++ *   fails to appear, and nothing in this driver can prevent that.
++ *
++ * Why: a virtual zone node deliberately has no 'thermal-sensors' property, and
++ * thermal_of does not tolerate such a child.  of_thermal_zone_find() walks every
++ * available child of /thermal-zones looking for the zone belonging to the sensor
++ * being registered, and on the first child without 'thermal-sensors' it does
++ *
++ *	pr_err("%pOFn: missing thermal sensor\n", child);
++ *	tz = ERR_PTR(-EINVAL);
++ *	goto out;
++ *
++ * - it abandons the entire search rather than skipping the node.  Every sensor
++ * whose own zone had not been reached yet loses its zone.
++ *
++ * Adding the nodes with &{/thermal-zones} { ... }, which is how a board normally
++ * does it, appends them and is therefore safe.  Declaring a virtual zone ahead
++ * of the SoC's own zones - for instance in a .dtsi included before the SoC one,
++ * or by deleting and re-adding a zone - is not.
++ *
++ * A related, harmless but misleading effect: a sensor that has no zone at all
++ * runs its search off the end of the list and logs that message against the
++ * first virtual zone it reaches, which had nothing to do with it.
++ *
++ * This is a thermal_of limitation, not something this driver can guard against -
++ * by the time thermal_of walks the list the nodes are already in it.  The proper
++ * fix is to make of_thermal_zone_find() skip such a child instead of failing,
++ * which changes behaviour for every device tree thermal zone on the platform and
++ * so is a deliberate decision, not a side effect of this driver.
+  */
+ 
+ #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+ 
+ #include <linux/err.h>
+ #include <linux/init.h>
++#include <linux/jiffies.h>
++#include <linux/lockdep.h>
++#include <linux/math64.h>
++#include <linux/minmax.h>
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+ #include <linux/of.h>
++#include <linux/of_platform.h>
++#include <linux/overflow.h>
+ #include <linux/platform_device.h>
+ #include <linux/slab.h>
+ #include <linux/sort.h>
+@@ -28,6 +69,15 @@
+ 
+ /**
+  * enum temp_calc_logic - Temperature calculation method types
++ * @LOGIC_NONE: Single source - report its temperature unchanged
++ * @LOGIC_MAX: Highest of the source temperatures; the default for several
++ * @LOGIC_MIN: Lowest of the source temperatures
++ * @LOGIC_AVERAGE: Arithmetic mean of the source temperatures
++ * @LOGIC_MEDIAN: Middle value once sorted, or the mean of the middle two
++ * @LOGIC_MEAN: Alias of @LOGIC_AVERAGE
++ * @LOGIC_WEIGHTED_AVERAGE: Mean weighted by 'source-weights'
++ * @LOGIC_ROLLING_AVERAGE: Boxcar average over evenly spaced samples
++ * @LOGIC_EXPONENTIAL_AVERAGE: Exponential moving average with a time constant
+  */
+ enum temp_calc_logic {
+ 	LOGIC_NONE = 0,
+@@ -57,257 +107,167 @@ static const char * const logic_names[] = {
+ #define MAX_VIRTUAL_ZONES 32
+ #define ROLLING_AVG_WINDOW_SIZE 5
+ 
++/*
++ * Start the rolling window again rather than pushing into it when the gap
++ * between two accepted samples exceeds this many window spans.
++ *
++ * It has to be a multiple, not one span, because the gap is measured from the
++ * last sample this filter accepted, which between pushes is simply how often
++ * the zone is read.  'sample-interval-ms' is a floor on that, not the rate, so
++ * a zone polled more slowly than one window span would otherwise reset on every
++ * single read and never hold more than one sample - a boxcar average that had
++ * quietly become a pass-through.  Eight spans mirrors EMA_RESEED_TAUS, which is
++ * eight times the exponential average's own memory length.
++ *
++ * This narrows that case rather than removing it: a zone read less often than
++ * eight window spans still resets on every read.  That needs a tree asking for
++ * a window shorter than the rate it is read at, which contradicts itself, and
++ * closing it properly means remembering the gap actually observed rather than
++ * the configured floor - more state than the mode is worth.
++ */
++#define ROLLING_RESEED_WINDOWS 8
++
++/*
++ * Maximum depth of virtual-on-virtual chaining.
++ *
++ * A virtual zone's ->get_temp() reads its source zones, so a source zone's
++ * tz->lock is acquired nested inside this zone's tz->lock.  Every zone the
++ * thermal core creates shares a single lock class, which lockdep reports as
++ * recursive locking, so virt_tz_register() re-keys each virtual zone's
++ * tz->lock with a class of its own and a subclass equal to the zone's depth
++ * in the virtual dependency graph.  Dependency edges always run from a higher
++ * depth to a lower one, so the resulting class graph is acyclic by
++ * construction.  The usable depth is capped by MAX_LOCKDEP_SUBCLASSES.
++ */
++#define MAX_VIRT_DEPTH ((int)MAX_LOCKDEP_SUBCLASSES - 1)
++
++/* Bounds and default for 'time-constant-ms' (exponential-average), in ms */
++#define EMA_TAU_MS_MIN 10
++#define EMA_TAU_MS_MAX 600000
++#define EMA_TAU_MS_DEFAULT 3000
++
++/*
++ * Reseed the exponential average rather than integrating when the gap between
++ * two reads exceeds this many time constants: the previous value carries no
++ * useful information any more, and it keeps the arithmetic bounded.
++ */
++#define EMA_RESEED_TAUS 8
++
++/*
++ * Upper bound on a single entry of 'source-weights'.  Keeps the weighted sum
++ * inside an s64 for any plausible number of sources and temperature.
++ */
++#define MAX_SOURCE_WEIGHT 65535
++
++/*
++ * Bounds on 'coefficients'.  Same reasoning as MAX_SOURCE_WEIGHT: reject a
++ * configuration that can only be a mistake.  The corrected temperature is
++ * computed in s64 and clamped on top of this, so an in-range coefficient can
++ * never overflow the int the thermal core stores.
++ */
++#define MAX_COEFF_SLOPE 65535
++#define MAX_COEFF_OFFSET 1000000	/* 1000 degrees C, in millidegrees */
++
++/* Bounds for 'sample-interval-ms' (rolling-average), in ms */
++#define SAMPLE_MS_MIN 10
++#define SAMPLE_MS_MAX 600000
++
++/*
++ * The thermal core refuses a zone with more trips than fit the int trip mask
++ * it is handed (see thermal_zone_device_register_with_trips()), so reject them
++ * here with a message that names the limit that actually applies.
++ */
++#define MAX_TRIPS 31
++
+ /**
+  * struct virt_tz - Runtime data for virtual thermal zone
+- * @tz: Array of source thermal zone device pointers
++ * @tz: Array of source thermal zone device pointers. These are NOT
++ *      reference counted; their lifetime is covered by the device links
++ *      that virt_tz_link_sources() adds - see the comment there
+  * @num_sensors: Number of source thermal zones
+  * @logic: Temperature calculation method
+- * @lock: Mutex for protecting concurrent access
++ * @depth: Depth in the virtual dependency graph (0 = every source is real)
+  * @of_node: Cached device tree node pointer
++ * @weights: Per-source weights for LOGIC_WEIGHTED_AVERAGE, NULL if equal
++ * @temps: Scratch array holding the temperatures read this pass
++ * @wbuf: Scratch array holding the weight matching each entry of @temps
++ * @sorted: Scratch array used to sort @temps for LOGIC_MEDIAN
++ * @tau_ms: Time constant of the exponential average, in ms
++ * @sample_interval_ms: Minimum spacing between rolling-average samples, in ms
++ * @last_sample: jiffies at which the filter state was last advanced
++ * @trend: Direction of the last accepted sample.  Written by
++ *	virt_tz_apply_filter(), and by virt_tz_read_temp() when no source can
++ *	be read at all; read by virt_tz_get_trend().  All three run under
++ *	tz->lock
++ * @last_output: Last value published by a stateful calculation method
++ * @last_output_valid: Whether @last_output holds a value
+  * @rolling_temps: Circular buffer for rolling average
+  * @rolling_index: Current index in rolling buffer
+  * @rolling_count: Number of valid entries in rolling buffer
+  * @exp_avg_temp: Last exponential average temperature
+- * @exp_avg_initialized: Whether exponential average is initialized
++ * @read_failures: Consecutive reads in which no source could be read
++ *
++ * Locking: everything from @tz to @sample_interval_ms is configuration, written
++ * by virt_tz_register() before the zone is registered and read-only from then
++ * on.  That is what makes the lock-free reads elsewhere safe - virt_tz_bind()
++ * and virt_tz_unbind() take @of_node, the probe summary takes @num_sensors,
++ * @logic and @depth - and what lets virt_tz_unregister() free it all once the
++ * zone is gone and no reader is left.
++ *
++ * Everything from @last_sample down, together with the contents of the @temps,
++ * @wbuf and @sorted scratch arrays, is mutated only by virt_tz_read_temp(),
++ * which the thermal core always calls with tz->lock held (see
++ * __thermal_zone_get_temp()).  That serialises the readers of one zone, so none
++ * of it needs a lock of its own.
+  */
+ struct virt_tz {
+ 	struct thermal_zone_device **tz;
+ 	int num_sensors;
+ 	enum temp_calc_logic logic;
+-	struct mutex lock;
++	int depth;
+ 	struct device_node *of_node;
++	/* Weighted average configuration */
++	u32 *weights;
++	/* Read-path scratch, sized num_sensors */
++	int *temps;
++	int *wbuf;
++	int *sorted;
++	/* Time base for the stateful calculation methods */
++	u32 tau_ms;
++	u32 sample_interval_ms;
++	unsigned long last_sample;
++	int last_output;
++	enum thermal_trend trend;
++	bool last_output_valid;
+ 	/* Rolling average state */
+ 	int rolling_temps[ROLLING_AVG_WINDOW_SIZE];
+ 	int rolling_index;
+ 	int rolling_count;
+ 	/* Exponential average state */
+ 	int exp_avg_temp;
+-	bool exp_avg_initialized;
++	/* Consecutive reads in which no source could be read */
++	unsigned int read_failures;
+ };
+ 
+ /**
+- * struct zone_defer_entry - Track defer count for each zone
+- * @name: Allocated copy of zone name from device tree
+- * @defer_count: Number of times this zone caused a defer
+- * @permanent_fail: True if zone has permanent error (invalid sources)
+- */
+-struct zone_defer_entry {
+-	char *name;
+-	int defer_count;
+-	bool permanent_fail;
+-};
+-
+-#define MAX_DEFER_COUNT 2
+-
+-/* Global defer tracking - persists across probe attempts
+- * Note: These are static globals because kernel clears platform_drvdata on probe failure
+- */
+-static struct zone_defer_entry global_defer_list[MAX_VIRTUAL_ZONES];
+-static int global_defer_list_count;
+-
+-/* Global registered zones tracking - persists across probe attempts
+- * Stores successfully registered zones so we don't re-register them on defer
+- */
+-static struct thermal_zone_device *global_registered_zones[MAX_VIRTUAL_ZONES];
+-static int global_registered_count;
+-
+-/**
+- * cleanup_global_defer_list() - Clean up all allocated zone name strings in global defer list
+- */
+-static void cleanup_global_defer_list(void)
+-{
+-	int i;
+-
+-	for (i = 0; i < global_defer_list_count; i++) {
+-		kfree(global_defer_list[i].name);
+-		global_defer_list[i].name = NULL;
+-	}
+-	global_defer_list_count = 0;
+-}
+-
+-/**
+- * get_zone_defer_count() - Get defer count for a zone
+- * @zone_name: Name of the zone to look up
+- *
+- * Return: defer count for the zone, or 0 if not found
+- */
+-static int get_zone_defer_count(const char *zone_name)
+-{
+-	int i;
+-
+-	if (!zone_name)
+-		return 0;
+-
+-	for (i = 0; i < global_defer_list_count; i++) {
+-		if (!strcmp(global_defer_list[i].name, zone_name))
+-			return global_defer_list[i].defer_count;
+-	}
+-
+-	return 0;
+-}
+-
+-/**
+- * increment_zone_defer_count() - Increment defer count for a zone
+- * @zone_name: Name of the zone to increment
+- */
+-static void increment_zone_defer_count(const char *zone_name)
+-{
+-	int i;
+-	char *name_copy;
+-
+-	if (!zone_name)
+-		return;
+-
+-	/* Check if zone already exists in list */
+-	for (i = 0; i < global_defer_list_count; i++) {
+-		if (!strcmp(global_defer_list[i].name, zone_name)) {
+-			global_defer_list[i].defer_count++;
+-			return;
+-		}
+-	}
+-
+-	/* Add new entry if space available */
+-	if (global_defer_list_count < MAX_VIRTUAL_ZONES) {
+-		/* Allocate and copy zone name */
+-		name_copy = kstrdup(zone_name, GFP_KERNEL);
+-		if (!name_copy) {
+-			/* CRITICAL: Cannot track defer without memory - use BUG_ON to halt */
+-			pr_crit("CRITICAL: Failed to allocate memory for zone name '%s'\n", zone_name);
+-			BUG();
+-		}
+-
+-		global_defer_list[global_defer_list_count].name = name_copy;
+-		global_defer_list[global_defer_list_count].defer_count = 1;
+-		global_defer_list[global_defer_list_count].permanent_fail = false;
+-		global_defer_list_count++;
+-	} else {
+-		pr_warn("defer_list full (%d entries), cannot track defer for zone '%s'\n", MAX_VIRTUAL_ZONES, zone_name);
+-	}
+-}
+-
+-/**
+- * mark_zone_permanent_fail() - Mark a zone as permanently failed
+- * @zone_name: Name of the zone to mark
+- */
+-static void mark_zone_permanent_fail(const char *zone_name)
+-{
+-	int i;
+-	char *name_copy;
+-
+-	if (!zone_name)
+-		return;
+-
+-	/* Check if zone already exists in list */
+-	for (i = 0; i < global_defer_list_count; i++) {
+-		if (!strcmp(global_defer_list[i].name, zone_name)) {
+-			global_defer_list[i].permanent_fail = true;
+-			return;
+-		}
+-	}
+-
+-	/* Add new entry if space available */
+-	if (global_defer_list_count < MAX_VIRTUAL_ZONES) {
+-		/* Allocate and copy zone name */
+-		name_copy = kstrdup(zone_name, GFP_KERNEL);
+-		if (!name_copy) {
+-			/* CRITICAL: Cannot track permanent fail without memory - use BUG_ON to halt */
+-			pr_crit("CRITICAL: Failed to allocate memory for zone name '%s'\n", zone_name);
+-			BUG();
+-		}
+-
+-		global_defer_list[global_defer_list_count].name = name_copy;
+-		global_defer_list[global_defer_list_count].defer_count = 0;
+-		global_defer_list[global_defer_list_count].permanent_fail = true;
+-		global_defer_list_count++;
+-	} else {
+-		pr_warn("defer_list full (%d entries), cannot track permanent fail for zone '%s'\n", MAX_VIRTUAL_ZONES, zone_name);
+-	}
+-}
+-
+-/**
+- * is_zone_permanent_fail() - Check if a zone is marked as permanently failed
+- * @zone_name: Name of the zone to check
++ * struct virt_tz_data - Every zone registered by one successful probe
++ * @nzones: Number of entries in @zone
++ * @zone: The registered zones, in the order they were registered
+  *
+- * Return: true if zone is permanently failed, false otherwise
+- */
+-static bool is_zone_permanent_fail(const char *zone_name)
+-{
+-	int i;
+-
+-	if (!zone_name)
+-		return false;
+-
+-	for (i = 0; i < global_defer_list_count; i++) {
+-		if (!strcmp(global_defer_list[i].name, zone_name))
+-			return global_defer_list[i].permanent_fail;
+-	}
+-
+-	return false;
+-}
+-
+-/**
+- * has_deferred_zones() - Check if there are zones that might still be deferred
+- *
+- * Return: true if there are zones with defer count > 0 and not permanently failed
+- */
+-static bool has_deferred_zones(void)
+-{
+-	int i;
+-
+-	for (i = 0; i < global_defer_list_count; i++) {
+-		/* If zone has defer attempts and is not permanently failed,
+-		 * it might be deferred again in future probe attempts
+-		 */
+-		if (global_defer_list[i].defer_count > 0 &&
+-		    !global_defer_list[i].permanent_fail)
+-			return true;
+-	}
+-
+-	return false;
+-}
+-
+-/**
+- * zone_permanent_fail_count() - Count zones marked as permanently failed
+- *
+- * Return: Number of zones marked with permanent_fail = true
+- */
+-static int zone_permanent_fail_count(void)
+-{
+-	int i, count = 0;
+-
+-	for (i = 0; i < global_defer_list_count; i++) {
+-		if (global_defer_list[i].permanent_fail)
+-			count++;
+-	}
+-
+-	return count;
+-}
+-
+-/**
+- * is_zone_already_registered() - Check if a zone is already registered
+- * @zone_name: Name of the zone to check
+- *
+- * Return: true if zone is already registered, false otherwise
+- */
+-static bool is_zone_already_registered(const char *zone_name)
+-{
+-	int i;
+-
+-	if (!zone_name)
+-		return false;
+-
+-	for (i = 0; i < global_registered_count; i++) {
+-		if (global_registered_zones[i] &&
+-		    global_registered_zones[i]->type &&
+-		    !strcmp(global_registered_zones[i]->type, zone_name))
+-			return true;
+-	}
+-
+-	return false;
+-}
++ * A probe either registers every zone it can and stores them here, or it
++ * registers nothing: a zone that defers rolls the whole attempt back.  Nothing
++ * therefore has to survive a failed probe, and the teardown in virt_tz_remove()
++ * is just this array walked backwards.
++ */
++struct virt_tz_data {
++	int nzones;
++	struct thermal_zone_device *zone[];
++};
+ 
+ /**
+  * compare_ints() - Comparison function for sorting
++ * @a: First value
++ * @b: Second value
+  */
+ static int compare_ints(const void *a, const void *b)
+ {
+@@ -323,6 +283,8 @@ static int compare_ints(const void *a, const void *b)
+ 
+ /**
+  * calculate_max_temp() - Calculate maximum temperature
++ * @temps: Source temperatures, in millidegree Celsius
++ * @count: Number of entries in @temps
+  */
+ static int calculate_max_temp(int *temps, int count)
+ {
+@@ -339,6 +301,8 @@ static int calculate_max_temp(int *temps, int count)
+ 
+ /**
+  * calculate_min_temp() - Calculate minimum temperature
++ * @temps: Source temperatures, in millidegree Celsius
++ * @count: Number of entries in @temps
+  */
+ static int calculate_min_temp(int *temps, int count)
+ {
+@@ -355,6 +319,8 @@ static int calculate_min_temp(int *temps, int count)
+ 
+ /**
+  * calculate_average_temp() - Calculate average temperature
++ * @temps: Source temperatures, in millidegree Celsius
++ * @count: Number of entries in @temps
+  */
+ static int calculate_average_temp(int *temps, int count)
+ {
+@@ -369,6 +335,8 @@ static int calculate_average_temp(int *temps, int count)
+ 
+ /**
+  * calculate_mean_temp() - Calculate mean temperature (same as average)
++ * @temps: Source temperatures, in millidegree Celsius
++ * @count: Number of entries in @temps
+  */
+ static int calculate_mean_temp(int *temps, int count)
+ {
+@@ -377,43 +345,67 @@ static int calculate_mean_temp(int *temps, int count)
+ 
+ /**
+  * calculate_median_temp() - Calculate median temperature
++ * @temps: Temperatures that were read successfully
++ * @sorted: Scratch array of at least @count entries
++ * @count: Number of valid entries
++ *
++ * Return: median of @temps
+  */
+-static int calculate_median_temp(int *temps, int count)
++static int calculate_median_temp(int *temps, int *sorted, int count)
+ {
+-	int *sorted_temps;
+ 	int median;
+ 
+-	sorted_temps = kmemdup(temps, count * sizeof(int), GFP_KERNEL);
+-	if (!sorted_temps)
+-		return calculate_average_temp(temps, count);
++	memcpy(sorted, temps, count * sizeof(*temps));
+ 
+-	sort(sorted_temps, count, sizeof(int), compare_ints, NULL);
++	sort(sorted, count, sizeof(int), compare_ints, NULL);
+ 
+ 	if (count % 2 == 0)
+-		median = (int)(((long long)sorted_temps[count / 2 - 1] + sorted_temps[count / 2]) / 2);
++		median = (int)(((long long)sorted[count / 2 - 1] + sorted[count / 2]) / 2);
+ 	else
+-		median = sorted_temps[count / 2];
++		median = sorted[count / 2];
+ 
+-	kfree(sorted_temps);
+ 	return median;
+ }
+ 
+ /**
+  * calculate_weighted_average_temp() - Calculate weighted average
+- * Weights are equal for now (same as average)
++ * @temps: Temperatures that were read successfully
++ * @weights: Weight matching each entry of @temps
++ * @count: Number of valid entries
++ *
++ * Weights come from the optional 'source-weights' property, one per entry of
++ * 'source-thermal-zones'.  A source that could not be read is dropped from
++ * both arrays at once, so the surviving weights stay matched to their zone.
++ *
++ * Return: weighted average, or the plain average if the weights sum to zero
+  */
+-static int calculate_weighted_average_temp(int *temps, int count)
++static int calculate_weighted_average_temp(int *temps, int *weights, int count)
+ {
+-	/* For now, equal weights = simple average */
+-	return calculate_average_temp(temps, count);
++	long long sum = 0;
++	long long total = 0;
++	int i;
++
++	for (i = 0; i < count; i++) {
++		sum += (long long)temps[i] * weights[i];
++		total += weights[i];
++	}
++
++	if (total <= 0)
++		return calculate_average_temp(temps, count);
++
++	return (int)div64_s64(sum, total);
+ }
+ 
+ /**
+- * calculate_rolling_average_temp() - Calculate rolling average
++ * calculate_rolling_average_temp() - Push one sample into the rolling window
+  * @virt: Virtual thermal zone structure
+  * @current_temp: Current aggregated temperature
+  *
+- * Maintains a circular buffer and returns the average of the window
++ * Maintains a circular buffer and returns the average of the window.  Spacing
++ * the samples is the caller's job (see virt_tz_apply_filter()): a boxcar
++ * average only means anything over evenly spaced samples.
++ *
++ * Return: average of the window
+  */
+ static int calculate_rolling_average_temp(struct virt_tz *virt, int current_temp)
+ {
+@@ -435,32 +427,188 @@ static int calculate_rolling_average_temp(struct virt_tz *virt, int current_temp
+ }
+ 
+ /**
+- * calculate_exponential_average_temp() - Calculate exponential moving average
++ * calculate_exponential_average_temp() - Advance the exponential moving average
+  * @virt: Virtual thermal zone structure
+  * @current_temp: Current aggregated temperature
++ * @dt_ms: Time since the average was last advanced, in ms
+  *
+- * Uses alpha = 0.3 for smoothing factor
+- * EMA = alpha * current + (1 - alpha) * previous
++ * The smoothing factor is derived from the elapsed time instead of being
++ * applied once per call, so the time constant is expressed in real time and
++ * does not change with how often ->get_temp() happens to be called:
++ *
++ *	alpha = dt / (tau + dt)
++ *	EMA  += alpha * (current - EMA)
++ *
++ * The increment is integer arithmetic and truncates toward zero, so an offset
++ * smaller than (tau + dt) / dt millidegrees produces no increment at all and the
++ * average parks there instead of closing the last fraction of a degree: about
++ * 4 mC at the default tau with a 1 s poll, about 31 mC with a 100 ms one.  That
++ * is an order of magnitude below what the sensors resolve, and the value it
++ * parks at is already the right answer, so do not "fix" it by rounding - that
++ * would only add a half-LSB wobble to a reading that had settled.
++ *
++ * Return: the updated average
++ */
++static int calculate_exponential_average_temp(struct virt_tz *virt,
++					      int current_temp, unsigned int dt_ms)
++{
++	s64 delta = (s64)current_temp - virt->exp_avg_temp;
++	s64 avg;
++
++	/*
++	 * The operands are bounded: |delta| < 2^32 because both temperatures
++	 * are ints, and dt_ms <= tau_ms * EMA_RESEED_TAUS because a longer gap
++	 * reseeds instead of integrating, so the product and the divisor are
++	 * safe in s64.  The quotient is not safe in an int: alpha approaches 1
++	 * as dt approaches that limit, so a zone swinging between sources
++	 * clamped to INT_MAX and INT_MIN - reachable through 'coefficients' -
++	 * produces an increment of 3817748706 - 1.78 times INT_MAX - at every
++	 * tau where dt is exactly EMA_RESEED_TAUS * tau.  Folding it in as s64
++	 * is what makes that safe, and it is load-bearing.
++	 *
++	 * The clamp is not, and is kept as a belt on the braces.  The increment
++	 * carries delta's sign and never exceeds it in magnitude, so the sum can
++	 * never be carried past current_temp and always lands between two ints.
++	 * That holds for every tau_ms, EMA_TAU_MS_MIN or not, and whichever way
++	 * the division rounds, so it is not a property that decays if either
++	 * changes.
++	 */
++	avg = (s64)virt->exp_avg_temp + div_s64(delta * dt_ms,
++						(s32)(virt->tau_ms + dt_ms));
++
++	virt->exp_avg_temp = clamp_t(s64, avg, INT_MIN, INT_MAX);
++
++	return virt->exp_avg_temp;
++}
++
++/**
++ * virt_tz_apply_filter() - Run one sample through a stateful calculation method
++ * @virt: Virtual thermal zone structure
++ * @current_temp: Current aggregated temperature
++ *
++ * Gives the stateful methods a time base.  Both used to advance their state
++ * once per ->get_temp() call, which made their behaviour depend on how often
++ * the zone was read - by the core's polling, by every sysfs read, and, where a
++ * virtual zone is used as a source, by its consumers as well.
++ *
++ * Return: the value to publish
+  */
+-static int calculate_exponential_average_temp(struct virt_tz *virt, int current_temp)
++static int virt_tz_apply_filter(struct virt_tz *virt, int current_temp)
+ {
+-	int ema;
++	unsigned long now = jiffies;
++	unsigned long dj;
++	int prev;
+ 
+-	if (!virt->exp_avg_initialized) {
++	/* First sample: seed the filter with it */
++	if (!virt->last_output_valid) {
+ 		virt->exp_avg_temp = current_temp;
+-		virt->exp_avg_initialized = true;
++		if (virt->logic == LOGIC_ROLLING_AVERAGE)
++			current_temp = calculate_rolling_average_temp(virt,
++								      current_temp);
++
++		virt->last_sample = now;
++		virt->last_output = current_temp;
++		virt->last_output_valid = true;
++
+ 		return current_temp;
+ 	}
+ 
+-	/* Alpha = 0.3, so: EMA = (3 * current + 7 * previous) / 10 */
+-	ema = (int)(((long long)3 * current_temp + (long long)7 * virt->exp_avg_temp) / 10);
+-	virt->exp_avg_temp = ema;
++	/*
++	 * Compare the gap in jiffies rather than milliseconds.
++	 * jiffies_to_msecs() returns an unsigned int, so at HZ=250 a gap of
++	 * about 49 days truncates - and a truncated gap looks small, which
++	 * would defeat both tests below rather than erring towards a reseed.
++	 * Reachable with 'polling-delay = <0>', where the zone is read only on
++	 * demand and two reads can be arbitrarily far apart.  Narrowing happens
++	 * below, where the gap is already known to be within a few tau.
++	 */
++	dj = now - virt->last_sample;
++	prev = virt->last_output;
+ 
+-	return ema;
++	if (virt->logic == LOGIC_ROLLING_AVERAGE) {
++		/* Rate-limit so the window spans a known amount of time */
++		if (dj < msecs_to_jiffies(virt->sample_interval_ms))
++			return virt->last_output;
++
++		/*
++		 * Start the window again after a gap long enough that what it
++		 * holds is no longer a run of evenly spaced samples, the way the
++		 * exponential average reseeds below.  A zone with
++		 * 'polling-delay = <0>' is read on demand and can go unread for
++		 * any length of time; without this the next few readings blend
++		 * temperatures from before the gap, so a zone that was hot when
++		 * those samples were taken keeps reporting partly hot
++		 * afterwards, which can hold a trip on or delay one coming on.
++		 *
++		 * Both fields have to be cleared, and together.  The average is
++		 * summed over rolling_temps[0 .. rolling_count - 1] rather than
++		 * walked round the ring, which is only correct while
++		 * rolling_index == rolling_count below a full window.  Clearing
++		 * the count alone would leave the push writing at the old index
++		 * and the sum reading rolling_temps[0] - a sample from before
++		 * the gap, returned as though it were this one.  Clearing both
++		 * restores every field the average is computed from; the buffer
++		 * itself keeps its old contents, which the invariant above makes
++		 * unreachable.
++		 *
++		 * The cost of restarting is that the zone is briefly unfiltered:
++		 * the push right after this leaves one sample in the window, so
++		 * that reading is reported raw, and the next four are averaged
++		 * over a window that is still filling.  That is the same state a
++		 * freshly registered zone starts in, and it is the point of
++		 * restarting - a filtered stale value would be worse than an
++		 * unfiltered fresh one - but a zone read sporadically spends a
++		 * larger share of its readings there, which matters if the
++		 * smoothing was what kept a trip from chattering.
++		 */
++		if (dj > msecs_to_jiffies(virt->sample_interval_ms *
++					  ROLLING_AVG_WINDOW_SIZE *
++					  ROLLING_RESEED_WINDOWS)) {
++			virt->rolling_count = 0;
++			virt->rolling_index = 0;
++		}
++
++		virt->last_output = calculate_rolling_average_temp(virt, current_temp);
++	} else if (dj > msecs_to_jiffies(virt->tau_ms * EMA_RESEED_TAUS)) {
++		/* Too long a gap to integrate across - start again */
++		virt->exp_avg_temp = current_temp;
++		virt->last_output = current_temp;
++	} else {
++		unsigned int dt_ms = jiffies_to_msecs(dj);
++
++		if (!dt_ms)
++			return virt->last_output;
++
++		virt->last_output =
++			calculate_exponential_average_temp(virt, current_temp,
++							   dt_ms);
++	}
++
++	/*
++	 * Record which way this sample moved, for ->get_trend.  Only accepted
++	 * samples reach here, so between them the last direction stands rather
++	 * than decaying to STABLE - which is the whole point: a reader polling
++	 * faster than the filter samples would otherwise see two identical
++	 * values and hand the governor THERMAL_TREND_STABLE.
++	 */
++	if (virt->last_output > prev)
++		virt->trend = THERMAL_TREND_RAISING;
++	else if (virt->last_output < prev)
++		virt->trend = THERMAL_TREND_DROPPING;
++	else
++		virt->trend = THERMAL_TREND_STABLE;
++
++	virt->last_sample = now;
++
++	return virt->last_output;
+ }
+ 
+ /**
+  * enum tz_type - Thermal zone type in device tree
++ * @TZ_NOT_IN_DTS: No usable zone node carries the name - absent, disabled, or
++ *	named too long for the thermal core to accept
++ * @TZ_IS_REAL: A sensor-backed zone, owned by thermal_of
++ * @TZ_IS_VIRTUAL: Another zone of this driver's own
+  */
+ enum tz_type {
+ 	TZ_NOT_IN_DTS = 0,
+@@ -468,36 +616,90 @@ enum tz_type {
+ 	TZ_IS_VIRTUAL,
+ };
+ 
++/**
++ * of_find_thermal_zone_node() - Find the /thermal-zones child a source names
++ * @name: thermal zone name, as written in 'source-thermal-zones'
++ *
++ * Matches the way thermal_zone_get_zone_by_name() does - strncasecmp - and not
++ * the way of_get_child_by_name() does, which is exact and case sensitive.  The
++ * difference decides defer against permanent rejection in virt_tz_register():
++ * with an exact match, a source spelled in another case is "not described in
++ * the device tree" while it is still unregistered yet binds fine once it has
++ * registered, so the same device tree would be accepted or rejected depending
++ * on probe order - the class of behaviour this driver exists to remove.
++ *
++ * Children that cannot be registered under the name they are asked for are
++ * skipped - unavailable ones, and ones whose name the thermal core will not
++ * accept - because calling one of them a zone is worse than not finding it at
++ * all: the caller would defer waiting for something that can never arrive, and
++ * with only one deferral available that stalls every zone on the board until
++ * the deferred-probe timeout.  Reporting nothing instead gives an immediate,
++ * accurate rejection.
++ *
++ * This is a filter, not a guarantee.  A child carrying neither 'thermal-sensors'
++ * nor this driver's compatible is returned like any other and will never
++ * register, because nothing registers it: no sensor phandle means no driver
++ * ever calls devm_thermal_of_zone_register() for it, and no compatible means
++ * this driver's own collection loop skips it.  What thermal_of does at such a
++ * child is a separate cost - of_thermal_zone_find() abandons the search there,
++ * so every zone after it is lost too - and that is what
++ * virt_tz_warn_dt_ordering() reports.
++ *
++ * Return: the matching node with a reference taken, or NULL.  The caller puts it
++ */
++static struct device_node *of_find_thermal_zone_node(const char *name)
++{
++	struct device_node *tz_np, *np;
++
++	if (!name)
++		return NULL;
++
++	tz_np = of_find_node_by_path("/thermal-zones");
++	if (!tz_np)
++		return NULL;
++
++	for_each_child_of_node(tz_np, np) {
++		/*
++		 * A disabled node is registered by nobody, and
++		 * thermal_zone_device_register_with_trips() refuses a name of
++		 * THERMAL_NAME_LENGTH characters or more outright.
++		 */
++		if (!of_device_is_available(np) ||
++		    strlen(np->name) >= THERMAL_NAME_LENGTH)
++			continue;
++
++		if (!strncasecmp(np->name, name, THERMAL_NAME_LENGTH))
++			break;
++	}
++
++	of_node_put(tz_np);
++
++	return np;
++}
++
+ /**
+  * of_find_thermal_zone_by_name() - Check thermal zone type in device tree
+  * @name: thermal zone name to search for
+  *
+- * Return: TZ_NOT_IN_DTS if zone not found in DT,
++ * Return: TZ_NOT_IN_DTS if no usable zone node carries this name - absent, or
++ *             present but unable to become a zone, which of_find_thermal_zone_node()
++ *             treats the same way because the caller can only wait forever for
++ *             either,
+  *         TZ_IS_VIRTUAL if zone is virtual thermal zone,
+  *         TZ_IS_REAL if zone is a real/physical thermal zone
+  */
+ static enum tz_type of_find_thermal_zone_by_name(const char *name)
+ {
+-	struct device_node *tz_np, *np;
+-	enum tz_type type = TZ_NOT_IN_DTS;
++	struct device_node *np = of_find_thermal_zone_node(name);
++	enum tz_type type;
+ 
+-	if (!name)
++	if (!np)
+ 		return TZ_NOT_IN_DTS;
+ 
+-	tz_np = of_find_node_by_name(NULL, "thermal-zones");
+-	if (!tz_np)
+-		return TZ_NOT_IN_DTS;
+-
+-	np = of_get_child_by_name(tz_np, name);
+-	if (np) {
+-		if (of_device_is_compatible(np, "virtual-thermal-zone"))
+-			type = TZ_IS_VIRTUAL;
+-		else
+-			type = TZ_IS_REAL;
+-		of_node_put(np);
+-	}
++	type = of_device_is_compatible(np, "virtual-thermal-zone") ?
++	       TZ_IS_VIRTUAL : TZ_IS_REAL;
++	of_node_put(np);
+ 
+-	of_node_put(tz_np);
+ 	return type;
+ }
+ 
+@@ -515,10 +717,15 @@ static int of_find_trip_id(struct device_node *np, struct device_node *trip)
+ 	int i = 0;
+ 
+ 	trips = of_get_child_by_name(np, "trips");
+-	if (!trips) {
+-		pr_err("Failed to find 'trips' node\n");
++	if (!trips)
++		/*
++		 * Silent on purpose: the only caller reports this, and names
++		 * the zone, the map and what the failure costs, where this
++		 * could only say that some node was missing.  Two lines per
++		 * cooling device, on bind and again on unbind, for one
++		 * misconfigured map is not worth the second one.
++		 */
+ 		return -EINVAL;
+-	}
+ 
+ 	for_each_child_of_node(trips, t) {
+ 		if (t == trip) {
+@@ -542,17 +749,20 @@ static int of_find_trip_id(struct device_node *np, struct device_node *trip)
+  * Reads temperature from all source thermal zones and calculates
+  * the result based on configured calculation method (max, min, average, etc.)
+  *
+- * Thread-safe: Uses mutex to protect concurrent access
++ * The thermal core calls this with tz->lock held, which serialises the readers
++ * of one zone: the scratch buffers and the filter state need no lock of their
++ * own.  Reading a source acquires that source's tz->lock nested inside this
++ * one; see MAX_VIRT_DEPTH for how the nesting is described to lockdep.
+  *
+  * Return: 0 on success, negative error code on failure
+  */
+ static int virt_tz_read_temp(struct thermal_zone_device *tz, int *temp)
+ {
+ 	struct virt_tz *virt;
+-	int *temps;
+ 	int sens_temp, ret;
+ 	int i, valid_count = 0;
+ 	int calculated_temp;
++	s64 scaled;
+ 
+ 	if (!tz || !temp)
+ 		return -EINVAL;
+@@ -564,16 +774,14 @@ static int virt_tz_read_temp(struct thermal_zone_device *tz, int *temp)
+ 	if (!virt->tz)
+ 		return -EINVAL;
+ 
+-	/* Allocate temporary array for temperature readings */
+-	temps = kcalloc(virt->num_sensors, sizeof(int), GFP_KERNEL);
+-	if (!temps)
+-		return -ENOMEM;
++	lockdep_assert_held(&tz->lock);
+ 
+ 	/* Read temperatures from all source zones */
+ 	for (i = 0; i < virt->num_sensors; i++) {
+ 		if (!virt->tz[i])
+ 			continue;
+ 
++		/* Not reference counted; see virt_tz_link_sources() */
+ 		ret = thermal_zone_get_temp(virt->tz[i], &sens_temp);
+ 		if (ret) {
+ 			pr_debug("Virtual zone '%s': failed to read sensor %d: %d\n",
+@@ -581,90 +789,167 @@ static int virt_tz_read_temp(struct thermal_zone_device *tz, int *temp)
+ 			continue;
+ 		}
+ 
+-		temps[valid_count++] = sens_temp;
++		/*
++		 * Sources that fail to read are dropped, so carry each sample's
++		 * weight beside it instead of relying on the source index.
++		 */
++		virt->temps[valid_count] = sens_temp;
++		virt->wbuf[valid_count] = virt->weights ? virt->weights[i] : 1;
++		valid_count++;
+ 	}
+ 
+ 	if (valid_count == 0) {
+-		pr_err("Virtual zone '%s': no valid temperature readings\n", tz->type);
+-		kfree(temps);
+-		return -ENODATA;
++		virt->read_failures++;
++
++		/*
++		 * Forget which way it was going.  update_temperature() freezes
++		 * tz->temperature on this error, and a stale direction would
++		 * let step_wise keep stepping - down to THERMAL_NO_TARGET,
++		 * releasing the cooling device - on a zone that can no longer
++		 * see anything.  Stable is the honest answer while blind.
++		 */
++		virt->trend = THERMAL_TREND_STABLE;
++		/*
++		 * update_temperature() leaves tz->temperature at its last good
++		 * value when ->get_temp() fails and the core keeps driving the
++		 * trips from it, so a zone whose sources have all died freezes
++		 * at that reading instead of reporting anything new.  Nothing
++		 * here can fix that; say so once in a while so it is visible.
++		 *
++		 * -EAGAIN, not -ENODATA, and the difference is the log.
++		 * update_temperature() warns once per poll, unlimited, for
++		 * every error except -EAGAIN - one line a second at this
++		 * board's polling-delay, four at polling-delay-passive had a
++		 * governor put the zone in the passive regime, for as long as
++		 * the sources stay dead.  -EAGAIN is the code the core offers
++		 * for exactly this case, a read that did not work out rather
++		 * than a zone that is broken, and it is what imx, sun8i, qoriq
++		 * and rockchip return for a bad reading.  Nothing in the tree
++		 * branches on it beyond that one test, so the rate-limited
++		 * line above becomes the only report - and with its
++		 * consecutive-failure count it carries more than the core's
++		 * repeated one did.
++		 */
++		pr_warn_ratelimited("Virtual zone '%s': no source could be read (%u consecutive); the thermal core keeps acting on the last good temperature\n",
++				    tz->type, virt->read_failures);
++		return -EAGAIN;
+ 	}
+ 
+-	/* Lock for concurrent access protection (rolling/exponential avg state) */
+-	mutex_lock(&virt->lock);
++	if (unlikely(virt->read_failures)) {
++		pr_info_ratelimited("Virtual zone '%s': sources readable again after %u failed reads\n",
++				    tz->type, virt->read_failures);
++		virt->read_failures = 0;
++	}
+ 
+ 	/* Calculate temperature based on configured calculation method */
+ 	switch (virt->logic) {
+ 	case LOGIC_NONE:
+ 		/* No calculation needed, just pass through the single source temperature */
+-		calculated_temp = temps[0];
++		calculated_temp = virt->temps[0];
+ 		break;
+ 	case LOGIC_MAX:
+-		calculated_temp = calculate_max_temp(temps, valid_count);
++		calculated_temp = calculate_max_temp(virt->temps, valid_count);
+ 		break;
+ 	case LOGIC_MIN:
+-		calculated_temp = calculate_min_temp(temps, valid_count);
++		calculated_temp = calculate_min_temp(virt->temps, valid_count);
+ 		break;
+ 	case LOGIC_AVERAGE:
+-		calculated_temp = calculate_average_temp(temps, valid_count);
++		calculated_temp = calculate_average_temp(virt->temps, valid_count);
+ 		break;
+ 	case LOGIC_MEDIAN:
+-		calculated_temp = calculate_median_temp(temps, valid_count);
++		calculated_temp = calculate_median_temp(virt->temps, virt->sorted,
++							valid_count);
+ 		break;
+ 	case LOGIC_MEAN:
+-		calculated_temp = calculate_mean_temp(temps, valid_count);
++		/* 'mean' is an accepted alias for 'average' */
++		calculated_temp = calculate_mean_temp(virt->temps, valid_count);
+ 		break;
+ 	case LOGIC_WEIGHTED_AVERAGE:
+-		calculated_temp = calculate_weighted_average_temp(temps, valid_count);
++		calculated_temp = calculate_weighted_average_temp(virt->temps,
++								  virt->wbuf,
++								  valid_count);
+ 		break;
+ 	case LOGIC_ROLLING_AVERAGE:
+-		/* For rolling average, first get current aggregate (use average) */
+-		calculated_temp = calculate_average_temp(temps, valid_count);
+-		/* Then apply rolling average filter */
+-		calculated_temp = calculate_rolling_average_temp(virt, calculated_temp);
+-		break;
+ 	case LOGIC_EXPONENTIAL_AVERAGE:
+-		/* For exponential average, first get current aggregate (use average) */
+-		calculated_temp = calculate_average_temp(temps, valid_count);
+-		/* Then apply exponential smoothing filter */
+-		calculated_temp = calculate_exponential_average_temp(virt, calculated_temp);
++		/* Aggregate the sources first, then filter the sample */
++		calculated_temp = calculate_average_temp(virt->temps, valid_count);
++		calculated_temp = virt_tz_apply_filter(virt, calculated_temp);
+ 		break;
+ 	default:
+-		calculated_temp = calculate_max_temp(temps, valid_count);
++		calculated_temp = calculate_max_temp(virt->temps, valid_count);
+ 		break;
+ 	}
+ 
+-	mutex_unlock(&virt->lock);
++	/*
++	 * Apply 'coefficients'.  The core stores slope/offset for drivers to
++	 * use but never applies them itself, so a virtual zone has to do it;
++	 * the defaults (1, 0) leave the aggregate untouched.  Computed in s64
++	 * and clamped, so no combination of an accepted coefficient and a
++	 * source reading can overflow the int the core stores.
++	 */
++	/*
++	 * Read the correction from tz->tzp rather than caching it here.  The
++	 * core keeps its own copy (kmemdup at registration) and exposes it as
++	 * the writable sysfs attributes 'slope' and 'offset', so a cached copy
++	 * would make those two read back a value they no longer control -
++	 * which is worse than not offering them, because calibrating a virtual
++	 * zone is exactly what someone would reach for them to do.
++	 */
++	scaled = (s64)READ_ONCE(tz->tzp->slope) * calculated_temp +
++		 READ_ONCE(tz->tzp->offset);
+ 
+-	kfree(temps);
+-	*temp = calculated_temp;
++	*temp = clamp_t(s64, scaled, INT_MIN, INT_MAX);
+ 	return 0;
+ }
+ 
+ /**
+  * __virt_tz_bind() - Bind cooling device to a trip
++ * @map_np: The cooling-map node being processed
++ * @index: Index of the entry within the map's 'cooling-device' list
++ * @trip_id: Trip the map binds to
++ * @tz: Virtual thermal zone
++ * @cdev: Cooling device offered by the core
+  */
+ static int __virt_tz_bind(struct device_node *map_np, int index, int trip_id,
+-			       struct thermal_zone_device *tz,
+-			       struct thermal_cooling_device *cdev)
++			  struct thermal_zone_device *tz,
++			  struct thermal_cooling_device *cdev)
+ {
+ 	struct of_phandle_args cooling_spec;
+ 	int ret, weight = THERMAL_WEIGHT_DEFAULT;
++	bool match;
+ 
+ 	of_property_read_u32(map_np, "contribution", &weight);
+ 
+ 	ret = of_parse_phandle_with_args(map_np, "cooling-device",
+-					  "#cooling-cells", index, &cooling_spec);
++					 "#cooling-cells", index, &cooling_spec);
+ 	if (ret < 0) {
+ 		pr_err("Invalid cooling-device entry\n");
+ 		return ret;
+ 	}
+ 
++	/*
++	 * Unreachable, and kept for the same reason as the governor check in
++	 * virt_tz_register(): of_parse_phandle_with_args() returns 0 only
++	 * through the branch that has already rejected a NULL phandle and then
++	 * assigns out_args->np, so a success with no node cannot happen while a
++	 * cells_name is given.  Cheap insurance against that contract changing
++	 * under a pointer this function goes on to dereference.
++	 */
+ 	if (!cooling_spec.np) {
+ 		pr_err("NULL cooling device node pointer\n");
+ 		return -EINVAL;
+ 	}
+ 
++	/*
++	 * of_parse_phandle_with_args() hands back a reference, and the last use
++	 * of cooling_spec.np is the comparison against cdev->np - so take the
++	 * answer first and drop the reference after, rather than dropping it
++	 * and then reading the pointer.  Upstream thermal_of.c reads it after
++	 * the put; that only holds because a node of a static device tree is
++	 * never really freed (of_node_release() refuses to free one that is not
++	 * OF_DETACHED), which stops being true once overlays are enabled.
++	 */
++	match = cooling_spec.np == cdev->np;
+ 	of_node_put(cooling_spec.np);
+ 
+ 	if (cooling_spec.args_count < 2) {
+@@ -672,7 +957,7 @@ static int __virt_tz_bind(struct device_node *map_np, int index, int trip_id,
+ 		return -EINVAL;
+ 	}
+ 
+-	if (cooling_spec.np != cdev->np)
++	if (!match)
+ 		return 0;
+ 
+ 	ret = thermal_zone_bind_cooling_device(tz, trip_id, cdev,
+@@ -688,26 +973,35 @@ static int __virt_tz_bind(struct device_node *map_np, int index, int trip_id,
+ 
+ /**
+  * __virt_tz_unbind() - Unbind cooling device from a trip
++ * @map_np: The cooling-map node being processed
++ * @index: Index of the entry within the map's 'cooling-device' list
++ * @trip_id: Trip the map binds to
++ * @tz: Virtual thermal zone
++ * @cdev: Cooling device offered by the core
+  */
+ static int __virt_tz_unbind(struct device_node *map_np, int index, int trip_id,
+-				 struct thermal_zone_device *tz,
+-				 struct thermal_cooling_device *cdev)
++			    struct thermal_zone_device *tz,
++			    struct thermal_cooling_device *cdev)
+ {
+ 	struct of_phandle_args cooling_spec;
+ 	int ret;
++	bool match;
+ 
+ 	ret = of_parse_phandle_with_args(map_np, "cooling-device",
+-					  "#cooling-cells", index, &cooling_spec);
++					 "#cooling-cells", index, &cooling_spec);
+ 	if (ret < 0) {
+ 		pr_err("Invalid cooling-device entry\n");
+ 		return ret;
+ 	}
+ 
++	/* Unreachable; see __virt_tz_bind() */
+ 	if (!cooling_spec.np) {
+ 		pr_err("NULL cooling device node pointer\n");
+ 		return -EINVAL;
+ 	}
+ 
++	/* Reference held until its last use; see __virt_tz_bind() */
++	match = cooling_spec.np == cdev->np;
+ 	of_node_put(cooling_spec.np);
+ 
+ 	if (cooling_spec.args_count < 2) {
+@@ -715,7 +1009,7 @@ static int __virt_tz_unbind(struct device_node *map_np, int index, int trip_id,
+ 		return -EINVAL;
+ 	}
+ 
+-	if (cooling_spec.np != cdev->np)
++	if (!match)
+ 		return 0;
+ 
+ 	ret = thermal_zone_unbind_cooling_device(tz, trip_id, cdev);
+@@ -728,24 +1022,39 @@ static int __virt_tz_unbind(struct device_node *map_np, int index, int trip_id,
+ 
+ /**
+  * virt_tz_for_each_cooling_device() - Process each cooling device in a map
++ * @tz_np: Device tree node of the virtual zone
++ * @map_np: The cooling-map node being processed
++ * @tz: Virtual thermal zone
++ * @cdev: Cooling device offered by the core
++ * @is_bind: Non-zero to bind, zero to unbind
+  */
+ static int virt_tz_for_each_cooling_device(struct device_node *tz_np,
+-						 struct device_node *map_np,
+-						 struct thermal_zone_device *tz,
+-						 struct thermal_cooling_device *cdev,
+-						 int is_bind)
++					   struct device_node *map_np,
++					   struct thermal_zone_device *tz,
++					   struct thermal_cooling_device *cdev,
++					   int is_bind)
+ {
+ 	struct device_node *tr_np;
+-	int count, i, trip_id, ret;
++	int count, i, trip_id;
+ 
+ 	if (!tz_np || !map_np || !tz || !cdev)
+ 		return -EINVAL;
+ 
+ 	tr_np = of_parse_phandle(map_np, "trip", 0);
+-	if (!tr_np)
++	if (!tr_np) {
++		pr_err("%pOFn: cooling map '%pOFn' has no usable 'trip' phandle; this map and every one after it is ignored\n",
++		       tz_np, map_np);
+ 		return -ENODEV;
++	}
+ 
+ 	trip_id = of_find_trip_id(tz_np, tr_np);
++	/* The -ENXIO message dereferences tr_np, so both go out before the put */
++	if (trip_id == -ENXIO)
++		pr_err("%pOFn: cooling map '%pOFn' names trip '%pOFn', which is not a trip of this zone; this map and every one after it is ignored\n",
++		       tz_np, map_np, tr_np);
++	else if (trip_id < 0)
++		pr_err("%pOFn: cooling map '%pOFn' names a trip but this zone has none; this map and every one after it is ignored\n",
++		       tz_np, map_np);
+ 	of_node_put(tr_np);
+ 	if (trip_id < 0)
+ 		return trip_id;
+@@ -756,14 +1065,25 @@ static int virt_tz_for_each_cooling_device(struct device_node *tz_np,
+ 		return -ENOENT;
+ 	}
+ 
++	/*
++	 * Do not bail out on a bad entry - bind or unbind as many of the
++	 * cooling devices as possible, the way thermal_of does.  Each helper
++	 * reports its own failure, and one malformed entry must not cost the
++	 * rest of this map; nor, since an error returned from here breaks the
++	 * caller's loop over cooling-maps, every map that follows it.
++	 * thermal_zone_bind_cooling_device() returning -EEXIST for a device
++	 * tree that names one cooling device twice is enough to trigger that.
++	 *
++	 * Errors that describe the map itself rather than one of its entries -
++	 * a missing 'trip' phandle, a trip that is not this zone's, no
++	 * 'cooling-device' at all - are returned above and do stop the caller,
++	 * which is what thermal_of does too.
++	 */
+ 	for (i = 0; i < count; i++) {
+ 		if (is_bind)
+-			ret = __virt_tz_bind(map_np, i, trip_id, tz, cdev);
++			__virt_tz_bind(map_np, i, trip_id, tz, cdev);
+ 		else
+-			ret = __virt_tz_unbind(map_np, i, trip_id, tz, cdev);
+-
+-		if (ret)
+-			return ret;
++			__virt_tz_unbind(map_np, i, trip_id, tz, cdev);
+ 	}
+ 
+ 	return 0;
+@@ -771,11 +1091,15 @@ static int virt_tz_for_each_cooling_device(struct device_node *tz_np,
+ 
+ /**
+  * virt_tz_for_each_cooling_maps() - Iterate through all cooling maps
++ * @tz_np: Device tree node of the virtual zone
++ * @tz: Virtual thermal zone
++ * @cdev: Cooling device offered by the core
++ * @is_bind: Non-zero to bind, zero to unbind
+  */
+ static int virt_tz_for_each_cooling_maps(struct device_node *tz_np,
+-					       struct thermal_zone_device *tz,
+-					       struct thermal_cooling_device *cdev,
+-					       int is_bind)
++					 struct thermal_zone_device *tz,
++					 struct thermal_cooling_device *cdev,
++					 int is_bind)
+ {
+ 	struct device_node *cm_np, *child;
+ 	int ret = 0;
+@@ -801,9 +1125,11 @@ static int virt_tz_for_each_cooling_maps(struct device_node *tz_np,
+ 
+ /**
+  * virt_tz_bind() - Bind cooling device to virtual thermal zone
++ * @tz: Virtual thermal zone
++ * @cdev: Cooling device offered by the core
+  */
+ static int virt_tz_bind(struct thermal_zone_device *tz,
+-			      struct thermal_cooling_device *cdev)
++			struct thermal_cooling_device *cdev)
+ {
+ 	struct virt_tz *virt = tz->devdata;
+ 	struct device_node *tz_np;
+@@ -818,9 +1144,11 @@ static int virt_tz_bind(struct thermal_zone_device *tz,
+ 
+ /**
+  * virt_tz_unbind() - Unbind cooling device from virtual thermal zone
++ * @tz: Virtual thermal zone
++ * @cdev: Cooling device being withdrawn
+  */
+ static int virt_tz_unbind(struct thermal_zone_device *tz,
+-			        struct thermal_cooling_device *cdev)
++			  struct thermal_cooling_device *cdev)
+ {
+ 	struct virt_tz *virt = tz->devdata;
+ 	struct device_node *tz_np;
+@@ -833,14 +1161,189 @@ static int virt_tz_unbind(struct thermal_zone_device *tz,
+ 	return virt_tz_for_each_cooling_maps(tz_np, tz, cdev, 0);
+ }
+ 
++/**
++ * virt_tz_get_trend() - Direction of travel, for the governors
++ * @tz: Virtual thermal zone
++ * @trip: Trip being evaluated; unused, the trend is a property of the zone
++ * @trend: Out: direction
++ *
++ * get_tz_trend() falls back to comparing tz->temperature with
++ * tz->last_temperature when a zone provides no ->get_trend.  That fallback
++ * goes wrong on a boxcar zone: 'rolling-average' accepts one sample per
++ * 'sample-interval-ms' and returns the previous result in between, so a core
++ * polling faster than that reads the same value repeatedly and concludes the
++ * zone is stable.  step_wise raises a cooling state only on
++ * THERMAL_TREND_RAISING, so that costs an escalation step per poll - at the
++ * default delays, ten times slower than the zone would throttle without the
++ * filter.
++ *
++ * 'exponential-average' is not rate limited the same way: its only repeat gate
++ * is a zero elapsed time, so it advances on any read landing in a later jiffy
++ * and repeats a value only within one.  It is reported here all the same,
++ * because the direction the filter saw beats one inferred from its output, and
++ * because the average parks once the integer increment truncates to zero -
++ * where stable is the honest reading rather than a starved one.
++ *
++ * Report the direction the filter itself last saw instead.  The unfiltered
++ * methods need none of this: every read produces a fresh value, so the core's
++ * own comparison is right, and they say so by failing here.
++ *
++ * Return: 0 with @trend set, or -ENODATA to let the core decide
++ */
++static int virt_tz_get_trend(struct thermal_zone_device *tz,
++			     const struct thermal_trip *trip,
++			     enum thermal_trend *trend)
++{
++	struct virt_tz *virt = tz->devdata;
++	int slope;
++
++	if (!virt)
++		return -EINVAL;
++
++	if (virt->logic != LOGIC_ROLLING_AVERAGE &&
++	    virt->logic != LOGIC_EXPONENTIAL_AVERAGE) {
++		/*
++		 * The unfiltered methods produce a fresh value on every read,
++		 * so get_tz_trend()'s own comparison of tz->temperature against
++		 * tz->last_temperature is right - while the reads work.  It is
++		 * not right when they do not.  update_temperature() returns
++		 * before touching either field on a failed read, so the pair
++		 * keeps the last two good values; comparing two frozen and
++		 * generally unequal readings reports one fixed direction for
++		 * ever, and a fixed direction wedges step_wise in whichever of
++		 * its arms matters - stuck at DROPPING it walks the cooling
++		 * state down to THERMAL_NO_TARGET below the trip and never
++		 * steps up above it.
++		 *
++		 * It bites where a zone has read successfully at least once, its
++		 * cooling device sits above instance->lower, and it then goes
++		 * blind with the frozen tz->temperature below the trip and the
++		 * last two good readings descending - the state a zone is in
++		 * while cooling down, at the moment its sensors die.  Stuck at
++		 * DROPPING, get_target_state() steps the device down once per
++		 * poll until THERMAL_NO_TARGET; STABLE holds it where it is.
++		 *
++		 * A zone that has never read successfully is not the worst case
++		 * but the harmless one, which is worth saying because it looks
++		 * alarming: tz->temperature is THERMAL_TEMP_INVALID against a
++		 * kzalloc-zero tz->last_temperature, so the fallback does report
++		 * DROPPING - but get_target_state()'s !instance->initialized arm
++		 * ignores the trend on the first pass, and on every pass after
++		 * it the device is at or below instance->lower - the test is <=
++		 * - so DROPPING and STABLE both yield THERMAL_NO_TARGET.
++		 *
++		 * That holds where this zone alone drives the cooling device.
++		 * Share it with a zone that is holding it above lower and the
++		 * two answers part company: get_target_state() reads cur_state
++		 * back from the cdev, so DROPPING takes clamp(cur_state - 1, ...)
++		 * and claims a cooling state for a zone that has never read
++		 * anything, where STABLE leaves it at THERMAL_NO_TARGET.  That
++		 * is one more point for answering rather than declining, not a
++		 * case against it.
++		 *
++		 * Above the trip the fix gives up something, and the trade is
++		 * deliberate.  A blind zone frozen above its trip whose last two
++		 * good readings were ascending leaves the fallback stuck at
++		 * RAISING, and the throttle arm would ramp the device to
++		 * instance->upper; STABLE holds it at the step it had reached.
++		 * That is worth naming, but it is not information being lost.
++		 * The stuck direction is the gap between two samples of
++		 * unbounded age, repeated for ever; had those two readings
++		 * happened to descend instead, the same blind zone would hold
++		 * rather than ramp, so acting on it is incoherent before it is
++		 * unsafe.  STABLE says "no direction known", which is true, and
++		 * holding is the only answer that does not compound a guess.
++		 * The asymmetry settles it: holding never releases protection
++		 * already applied, and DROPPING does.
++		 *
++		 * Answer for the blind case and decline otherwise.  This is the
++		 * same STABLE-while-blind guarantee the read-failure path gives
++		 * a filtered zone through virt->trend; without it the guarantee
++		 * reached two of the nine methods and not the default one.  Note
++		 * it is the guarantee that is extended, not the store: this arm
++		 * writes the constant itself, so virt->trend stays read only by
++		 * the filtered branch below.
++		 * read_failures is written by ->get_temp earlier in this same
++		 * locked pass, so it means exactly "the read this governor is
++		 * acting on found no source".
++		 */
++		if (!virt->read_failures)
++			return -ENODATA;
++
++		*trend = THERMAL_TREND_STABLE;
++
++		return 0;
++	}
++
++	/*
++	 * virt->trend is the direction of the filter output, taken before
++	 * 'coefficients' is applied, while the governor compares the corrected
++	 * value against the trip.  Map one onto the other rather than declining:
++	 * the correction is linear, so a positive slope keeps the direction, a
++	 * negative slope reverses it exactly, and a zero slope pins the corrected
++	 * value to 'offset' - a constant, which is stable.  Read the slope once;
++	 * it is writable from sysfs.
++	 *
++	 * That read is not the one virt_tz_read_temp() used.  create_s32_tzp_attr()
++	 * stores slope and offset with no lock at all, so a write landing between
++	 * the two samples in one update leaves this direction derived from a slope
++	 * the temperature the governor is comparing was not computed with.  It
++	 * costs one step_wise decision, self-corrects on the next poll, and only
++	 * while someone is actively calibrating; caching the sign would mean new
++	 * state on the read path to close a transient nobody reaches by accident.
++	 *
++	 * Declining instead would hand the zone back to get_tz_trend()'s
++	 * comparison of tz->temperature against tz->last_temperature, which costs
++	 * two things.  One is the anti-starvation this op exists for.  The other
++	 * is the STABLE-while-blind guarantee from the read-failure path above:
++	 * update_temperature() leaves its last two good values in place when
++	 * ->get_temp() fails, so that comparison reports one fixed direction for
++	 * ever on a zone that can no longer see anything - and a fixed direction
++	 * wedges step_wise in whichever of its two arms matters.  Stuck at
++	 * DROPPING, get_target_state() walks the cooling state down to
++	 * THERMAL_NO_TARGET below the trip and never steps up above it, so a
++	 * blind zone that is actually hot keeps its cooling device idle; stuck at
++	 * RAISING it never steps down.  Inverting costs nothing and keeps both,
++	 * because STABLE maps to STABLE.
++	 */
++	slope = READ_ONCE(tz->tzp->slope);
++
++	if (slope > 0) {
++		*trend = virt->trend;
++	} else if (slope < 0) {
++		if (virt->trend == THERMAL_TREND_RAISING)
++			*trend = THERMAL_TREND_DROPPING;
++		else if (virt->trend == THERMAL_TREND_DROPPING)
++			*trend = THERMAL_TREND_RAISING;
++		else
++			*trend = THERMAL_TREND_STABLE;
++	} else {
++		*trend = THERMAL_TREND_STABLE;
++	}
++
++	return 0;
++}
++
++/*
++ * One ops instance, shared by every virtual zone.  It cannot be const:
++ * thermal_zone_device_register_with_trips() fills in ->critical itself when a
++ * driver leaves it NULL, and stores the pointer rather than a copy.  That write
++ * is idempotent and registration is single threaded, so sharing costs nothing
++ * today - but it does mean the zones cannot differ in their ops.  Giving one
++ * zone a callback another does not have (a ->hot, say) means allocating a
++ * struct per zone here and freeing it in virt_tz_unregister().
++ */
+ static struct thermal_zone_device_ops virt_tz_ops = {
+ 	.get_temp = virt_tz_read_temp,
++	.get_trend = virt_tz_get_trend,
+ 	.bind = virt_tz_bind,
+ 	.unbind = virt_tz_unbind,
+ };
+ 
+ /**
+  * virt_tz_parse_trips() - Parse trip points from DT
++ * @np: Device tree node of the virtual zone
++ * @ntrips: Out: number of trips parsed
+  */
+ static struct thermal_trip *virt_tz_parse_trips(struct device_node *np, int *ntrips)
+ {
+@@ -861,11 +1364,15 @@ static struct thermal_trip *virt_tz_parse_trips(struct device_node *np, int *ntr
+ 
+ 	count = of_get_child_count(trips_node);
+ 	if (!count) {
++		/*
++		 * thermal_of_trips_init() leaks this reference on the same
++		 * path; the put is deliberate, not redundant.
++		 */
+ 		of_node_put(trips_node);
+ 		return NULL;
+ 	}
+ 
+-	trips = kzalloc(sizeof(*trips) * count, GFP_KERNEL);
++	trips = kcalloc(count, sizeof(*trips), GFP_KERNEL);
+ 	if (!trips) {
+ 		of_node_put(trips_node);
+ 		return ERR_PTR(-ENOMEM);
+@@ -874,35 +1381,58 @@ static struct thermal_trip *virt_tz_parse_trips(struct device_node *np, int *ntr
+ 	for_each_child_of_node(trips_node, trip) {
+ 		ret = of_property_read_u32(trip, "temperature", &temp);
+ 		if (ret) {
+-			pr_err("Trip %s: missing temperature\n", trip->name);
++			pr_err("%pOFn: trip '%pOFn' is missing temperature\n",
++			       np, trip);
+ 			goto err_free;
+ 		}
+ 
+ 		ret = of_property_read_u32(trip, "hysteresis", &hyst);
+ 		if (ret) {
+-			pr_err("Trip %s: missing hysteresis\n", trip->name);
++			pr_err("%pOFn: trip '%pOFn' is missing hysteresis\n",
++			       np, trip);
+ 			goto err_free;
+ 		}
+ 
+ 		ret = of_property_read_string(trip, "type", &type_str);
+ 		if (ret) {
+-			pr_err("Trip %s: missing type\n", trip->name);
++			pr_err("%pOFn: trip '%pOFn' is missing type\n",
++			       np, trip);
+ 			goto err_free;
+ 		}
+ 
+ 		trips[i].temperature = temp;
+ 		trips[i].hysteresis = hyst;
+ 
+-		if (!strcmp(type_str, "active"))
++		/*
++		 * Case insensitively, because 'type' belongs to
++		 * thermal-zones.yaml rather than to this driver and
++		 * thermal_of_get_trip_type() parses it with strcasecmp().  A
++		 * spelling the core accepts on a sensor-backed zone has to be
++		 * accepted here too: rejecting one costs the whole virtual zone,
++		 * its trips and its cooling maps, and nothing validates these
++		 * nodes beforehand.  The driver is case sensitive only for its
++		 * own string property, 'calculate'.
++		 */
++		if (!strcasecmp(type_str, "active"))
+ 			trips[i].type = THERMAL_TRIP_ACTIVE;
+-		else if (!strcmp(type_str, "passive"))
++		else if (!strcasecmp(type_str, "passive"))
+ 			trips[i].type = THERMAL_TRIP_PASSIVE;
+-		else if (!strcmp(type_str, "hot"))
++		else if (!strcasecmp(type_str, "hot")) {
+ 			trips[i].type = THERMAL_TRIP_HOT;
+-		else if (!strcmp(type_str, "critical"))
++			/*
++			 * handle_critical_trips() calls ->hot for this type,
++			 * and a virtual zone provides none, so the trip fires
++			 * nothing.  "critical" is the opposite: the core
++			 * installs thermal_zone_device_critical() and the board
++			 * is powered off.
++			 */
++			pr_warn("%pOFn: trip '%pOFn' has type \"hot\", which takes no action on a virtual zone - use \"passive\"/\"active\" with a cooling-map, or \"critical\" to shut down\n",
++				np, trip);
++		} else if (!strcasecmp(type_str, "critical"))
+ 			trips[i].type = THERMAL_TRIP_CRITICAL;
+ 		else {
+-			pr_err("Trip %s: invalid type '%s'\n", trip->name, type_str);
++			pr_err("%pOFn: trip '%pOFn' has invalid type '%s'\n",
++			       np, trip, type_str);
+ 			goto err_free;
+ 		}
+ 
+@@ -927,9 +1457,11 @@ static struct thermal_trip *virt_tz_parse_trips(struct device_node *np, int *ntr
+  *
+  * Parses optional thermal zone parameters like sustainable-power,
+  * coefficients (slope/offset), thermal-governor, etc.
++ *
++ * Return: 0, or -EINVAL if 'coefficients' is out of range
+  */
+-static void virt_tz_parse_params(struct device_node *np,
+-				      struct thermal_zone_params *tzp)
++static int virt_tz_parse_params(struct device_node *np,
++				struct thermal_zone_params *tzp)
+ {
+ 	const char *governor_name;
+ 	int coef[2];
+@@ -937,18 +1469,48 @@ static void virt_tz_parse_params(struct device_node *np,
+ 	u32 prop;
+ 	int ret;
+ 
+-	/* Valid governor names from kernel 6.6 */
++	/*
++	 * Governor names this driver accepts - only the ones this kernel was
++	 * built with.
++	 *
++	 * Listing a name the build does not have is not merely useless, it is
++	 * unsafe.  The name would reach thermal_zone_device_register_with_trips(),
++	 * __find_governor() would return NULL, thermal_set_governor(tz, NULL)
++	 * would succeed, and the zone would finish registering with no governor
++	 * - published in sysfs by device_register(), which runs before the
++	 * governor is even looked up.  policy_show() and the netlink
++	 * TZ_GET_GOV handler both dereference tz->governor->name with no NULL
++	 * test, so anything reading 'policy' in the window before this driver
++	 * notices and unregisters the zone takes a NULL dereference.  The
++	 * window is only closed to userspace when this driver is built in;
++	 * loaded as a module it is wide open.
++	 *
++	 * Gating the list on the Kconfig symbols removes the window instead of
++	 * shortening it: an unavailable name now takes the unknown-name path
++	 * below, governor_name is left empty, and __find_governor("") returns
++	 * def_governor, which Kconfig guarantees exists.
++	 */
+ 	static const char * const valid_governors[] = {
++#ifdef CONFIG_THERMAL_GOV_STEP_WISE
+ 		"step_wise",
++#endif
++#ifdef CONFIG_THERMAL_GOV_FAIR_SHARE
+ 		"fair_share",
++#endif
++#ifdef CONFIG_THERMAL_GOV_BANG_BANG
+ 		"bang_bang",
++#endif
++#ifdef CONFIG_THERMAL_GOV_USER_SPACE
+ 		"user_space",
++#endif
++#ifdef CONFIG_THERMAL_GOV_POWER_ALLOCATOR
+ 		"power_allocator",
++#endif
+ 		NULL
+ 	};
+ 
+ 	if (!tzp)
+-		return;
++		return -EINVAL;
+ 
+ 	tzp->no_hwmon = true;
+ 
+@@ -960,7 +1522,13 @@ static void virt_tz_parse_params(struct device_node *np,
+ 
+ 		/* Validate governor name against known governors */
+ 		for (i = 0; valid_governors[i] != NULL; i++) {
+-			if (!strcmp(governor_name, valid_governors[i])) {
++			/*
++			 * Case-insensitively, as __find_governor() binds it -
++			 * otherwise "Step_Wise" is rejected here as unknown and
++			 * silently defaulted, when the core would have taken it.
++			 */
++			if (!strncasecmp(governor_name, valid_governors[i],
++					 THERMAL_NAME_LENGTH)) {
+ 				valid = true;
+ 				break;
+ 			}
+@@ -970,7 +1538,15 @@ static void virt_tz_parse_params(struct device_node *np,
+ 			strscpy(tzp->governor_name, governor_name, THERMAL_NAME_LENGTH);
+ 			pr_debug("%pOFn: Using thermal governor '%s'\n", np, governor_name);
+ 		} else {
+-			pr_warn("%pOFn: Unknown thermal governor '%s', using default\n",
++			/*
++			 * "not available" rather than "unknown", because since
++			 * valid_governors[] became build-gated this arm covers
++			 * both a misspelling and a governor that exists but was
++			 * not built in - and the second is now the likely one.
++			 * "Unknown" would send the reader hunting for a typo in
++			 * a device tree that does not have one.
++			 */
++			pr_warn("%pOFn: thermal governor '%s' is not available, using default\n",
+ 				np, governor_name);
+ 		}
+ 	}
+@@ -983,14 +1559,47 @@ static void virt_tz_parse_params(struct device_node *np,
+ 	 * thermal zone. Thus, we are considering only the first two
+ 	 * values as slope and offset.
+ 	 */
++	/*
++	 * Asymmetric, by way of of_property_read_variable_u32_array()'s sz_max
++	 * of 0: too few cells is -EOVERFLOW and rejected below, while too many
++	 * are accepted and silently truncated to the first two.  A tree
++	 * carrying the thermal-zones.yaml convention of one coefficient per
++	 * sensor plus a constant therefore parses, using the first two values
++	 * and ignoring the rest without a word.  The schema says maxItems: 2,
++	 * but these nodes cannot be validated (see the binding), so nothing
++	 * catches it.
++	 */
+ 	ret = of_property_read_u32_array(np, "coefficients", coef, ncoef);
++	if (ret == -EOVERFLOW || ret == -ENODATA) {
++		/*
++		 * Present but unusable - too short, or no value.  -EINVAL means
++		 * simply absent, which is the normal case and takes the
++		 * defaults below.
++		 */
++		pr_err("%pOFn: 'coefficients' must carry %d values\n", np, ncoef);
++		return -EINVAL;
++	}
+ 	if (ret) {
+ 		coef[0] = 1;
+ 		coef[1] = 0;
+ 	}
+ 
++	if (coef[0] > MAX_COEFF_SLOPE || coef[0] < -MAX_COEFF_SLOPE) {
++		pr_err("%pOFn: 'coefficients' slope %d is outside +/-%d\n",
++		       np, coef[0], MAX_COEFF_SLOPE);
++		return -EINVAL;
++	}
++
++	if (coef[1] > MAX_COEFF_OFFSET || coef[1] < -MAX_COEFF_OFFSET) {
++		pr_err("%pOFn: 'coefficients' offset %d is outside +/-%d\n",
++		       np, coef[1], MAX_COEFF_OFFSET);
++		return -EINVAL;
++	}
++
+ 	tzp->slope = coef[0];
+ 	tzp->offset = coef[1];
++
++	return 0;
+ }
+ 
+ /**
+@@ -1014,7 +1623,47 @@ static void virt_tz_unregister(struct thermal_zone_device *tz)
+ 	virt = tz->devdata;
+ 	trips = tz->trips;
+ 
+-	/* Step 1: Disable thermal zone (stops monitoring/polling) */
++	/*
++	 * Step 1: mark the zone disabled, so a poll already queued becomes a
++	 * no-op - __thermal_zone_device_update() returns at its
++	 * thermal_zone_device_is_enabled() test, before it reads anything or
++	 * reaches monitor_thermal_zone().  It does not cancel anything: the work
++	 * is stopped by cancel_delayed_work_sync() in step 2, and an in-flight
++	 * sysfs read by the device_del() that follows it, which together are
++	 * what the reverse-depth teardown order relies on.
++	 *
++	 * Do not drop this call as an optimisation.
++	 * thermal_zone_device_unregister() removes the zone with list_del(),
++	 * not list_del_init(), so tz->node is left poisoned rather than empty
++	 * and thermal_zone_is_present() keeps answering true; the gate in
++	 * thermal_zone_device_update() therefore does not close during
++	 * teardown.  Between that list_del() and the
++	 * cancel_delayed_work_sync() ten lines later - across a
++	 * thermal_list_lock drop and the whole cooling-device unbind loop - a
++	 * queued poll reaches __thermal_zone_device_update() with nothing else
++	 * in its way, and tz->mode is what stops it reading every source,
++	 * walking the trips and acting on them, on a zone already off the list
++	 * and about to be freed.  Acting on them is not only a fan command:
++	 * handle_critical_trips() calls tz->ops->critical(), which for this
++	 * driver is the core's own thermal_zone_device_critical() - the driver
++	 * leaves the pointer NULL so the core installs it - and that calls
++	 * hw_protection_shutdown().  A poll let through here can power the
++	 * board off.  It also suppresses a netlink temperature sample for a
++	 * zone that is about to be announced as deleted, and emits the netlink
++	 * disable event.
++	 *
++	 * What it is not protecting against is the poll re-arming itself.
++	 * cancel_delayed_work_sync() defeats that unaided.  __cancel_work_timer()
++	 * claims WORK_STRUCT_PENDING_BIT and only then calls
++	 * mark_work_canceling(), before __flush_work().  So a mod_delayed_work()
++	 * from inside the still-running callback finds PENDING already held,
++	 * takes try_to_grab_pending()'s fail path, and gets -EAGAIN while
++	 * CANCELING is not yet marked - mod_delayed_work_on() spins on that -
++	 * then -ENOENT once it is, at which point the requeue is skipped.  A
++	 * re-arm that lands before the cancel starts is simply cancelled by it.
++	 * The earlier claim here that this call was the only thing preventing a
++	 * re-arm was wrong.
++	 */
+ 	thermal_zone_device_disable(tz);
+ 
+ 	/* Step 2: Unregister from thermal subsystem
+@@ -1036,22 +1685,37 @@ static void virt_tz_unregister(struct thermal_zone_device *tz)
+ 	kfree(trips);
+ 
+ 	if (virt) {
++		kfree(virt->sorted);
++		kfree(virt->wbuf);
++		kfree(virt->temps);
++		kfree(virt->weights);
+ 		kfree(virt->tz);
+ 		of_node_put(virt->of_node);
+-		mutex_destroy(&virt->lock);
+ 		kfree(virt);
+ 	}
+ }
+ 
++/* Lock class shared by every virtual zone; see MAX_VIRT_DEPTH */
++static struct lock_class_key virt_tz_lock_key;
++
+ /**
+  * virt_tz_register() - Register a virtual thermal zone from DT
+  * @np: Device tree node of the virtual thermal zone
++ * @depth: Depth of this zone in the virtual dependency graph, as resolved by
++ *         virt_tz_probe(); 0 when every source is a real thermal zone
++ *
++ * Sources may themselves be virtual zones.  virt_tz_probe() registers zones in
++ * order of increasing depth, so by the time this runs every source of @np that
++ * can be registered already is; a source that is still missing is a reason to
++ * defer, never to reject.
+  *
+  * Device tree example:
+- *   cpuss-max-step {
++ *   cpussmax-thermal {
+  *       compatible = "virtual-thermal-zone";
+  *       source-thermal-zones = "cluster-thermal", "cpu0-thermal",
+  *                              "cpu1-thermal", "cpu2-thermal";
++ *       calculate = "weighted-average";
++ *       source-weights = <2 1 1 1>;
+  *       polling-delay-passive = <100>;
+  *       polling-delay = <1000>;
+  *       sustainable-power = <1000>;
+@@ -1073,9 +1737,20 @@ static void virt_tz_unregister(struct thermal_zone_device *tz)
+  *       };
+  *   };
+  *
+- * Return: thermal zone device pointer on success, ERR_PTR on error
++ * Optional properties consumed here:
++ *   calculate            - aggregation method, see logic_names[]
++ *   source-weights       - one weight per source, 'weighted-average' only
++ *   time-constant-ms     - time constant of 'exponential-average'
++ *   sample-interval-ms   - sample spacing of 'rolling-average'
++ *   coefficients         - <slope offset> applied to the aggregate
++ *
++ * Return: thermal zone device pointer on success, ERR_PTR on error.  The zone
++ * comes back registered but NOT enabled: enabling it runs a synchronous
++ * ->get_temp(), so the caller must first tie itself to the sources' providers
++ * (see virt_tz_link_sources()) and only then call
++ * thermal_zone_device_enable().
+  */
+-static struct thermal_zone_device *virt_tz_register(struct device_node *np)
++static struct thermal_zone_device *virt_tz_register(struct device_node *np, int depth)
+ {
+ 	struct thermal_zone_device *tz;
+ 	struct virt_tz *virt;
+@@ -1085,13 +1760,13 @@ static struct thermal_zone_device *virt_tz_register(struct device_node *np)
+ 	char *source_name_stable;
+ 	u32 polling_delay = 0, passive_delay = 0;
+ 	int ntrips, mask;
+-	int count, i, ret;
++	int count, i, j, ret;
++	int nweights;
+ 	bool defer = false;
+-	int virtual_count = 0, notfound_count = 0;
+-	char *virtual_zones[MAX_VIRTUAL_ZONES] = {NULL};
++	int notfound_count = 0;
+ 	char *notfound_zones[MAX_VIRTUAL_ZONES] = {NULL};
+ 	enum tz_type tz_type;
+-	
++
+ 	/* Read source thermal zones */
+ 	count = of_property_count_strings(np, "source-thermal-zones");
+ 	if (count <= 0) {
+@@ -1109,13 +1784,25 @@ static struct thermal_zone_device *virt_tz_register(struct device_node *np)
+ 	}
+ 
+ 	virt->num_sensors = count;
+-	mutex_init(&virt->lock);
++	virt->depth = depth;
+ 	virt->of_node = of_node_get(np);
+ 
+ 	/* Parse calculate property from DT */
+ 	if (count == 1) {
+-		/* Single source: always use LOGIC_NONE - ignore DT calculate property */
++		const char *calculate_str;
++
++		/*
++		 * One source is a pass-through - there is nothing to aggregate.
++		 * Say so instead of dropping the property in silence, the way
++		 * an unusable 'source-weights' is called out below: asking for
++		 * exponential-average over a single noisy sensor is a plausible
++		 * mistake, and it would otherwise do nothing without a word.
++		 */
+ 		virt->logic = LOGIC_NONE;
++
++		if (!of_property_read_string(np, "calculate", &calculate_str))
++			pr_warn("%pOFn: 'calculate' is ignored for a single-source zone, which always passes its source through\n",
++				np);
+ 	} else {
+ 		/* Multiple sources: parse calculate from DT, default to LOGIC_MAX */
+ 		const char *calculate_str;
+@@ -1151,10 +1838,74 @@ static struct thermal_zone_device *virt_tz_register(struct device_node *np)
+ 		goto free_virt;
+ 	}
+ 
++	/*
++	 * Read-path scratch, allocated once.  ->get_temp() runs under tz->lock,
++	 * so a per-zone buffer is safe and the temperature path stays free of
++	 * allocations.
++	 */
++	virt->temps = kcalloc(count, sizeof(*virt->temps), GFP_KERNEL);
++	virt->wbuf = kcalloc(count, sizeof(*virt->wbuf), GFP_KERNEL);
++	virt->sorted = kcalloc(count, sizeof(*virt->sorted), GFP_KERNEL);
++	if (!virt->temps || !virt->wbuf || !virt->sorted) {
++		ret = -ENOMEM;
++		goto free_tz_array;
++	}
++
++	/* Optional per-source weights for 'weighted-average' */
++	nweights = of_property_count_u32_elems(np, "source-weights");
++	if (of_property_present(np, "source-weights") && nweights <= 0) {
++		/*
++		 * of_property_count_u32_elems() returns -EINVAL both for an
++		 * absent property and for one whose length is not a multiple of
++		 * 4, so presence has to be tested separately.  Without this a
++		 * malformed property would quietly leave a weighted-average
++		 * zone computing a plain average.
++		 */
++		pr_err("%pOFn: 'source-weights' is malformed (%d)\n",
++		       np, nweights);
++		ret = -EINVAL;
++		goto free_tz_array;
++	}
++
++	if (nweights > 0) {
++		if (nweights != count) {
++			pr_err("%pOFn: 'source-weights' has %d entries, expected %d\n",
++			       np, nweights, count);
++			ret = -EINVAL;
++			goto free_tz_array;
++		}
++
++		virt->weights = kcalloc(count, sizeof(*virt->weights), GFP_KERNEL);
++		if (!virt->weights) {
++			ret = -ENOMEM;
++			goto free_tz_array;
++		}
++
++		ret = of_property_read_u32_array(np, "source-weights",
++						 virt->weights, count);
++		if (ret) {
++			pr_err("%pOFn: failed to read 'source-weights': %d\n", np, ret);
++			goto free_tz_array;
++		}
++
++		for (i = 0; i < count; i++) {
++			if (virt->weights[i] > MAX_SOURCE_WEIGHT) {
++				pr_err("%pOFn: source weight %u exceeds %d\n",
++				       np, virt->weights[i], MAX_SOURCE_WEIGHT);
++				ret = -EINVAL;
++				goto free_tz_array;
++			}
++		}
++
++		if (virt->logic != LOGIC_WEIGHTED_AVERAGE)
++			pr_warn("%pOFn: 'source-weights' is only used by calculate = \"weighted-average\"\n",
++				np);
++	}
++
+ 	/* Look up and validate source thermal zones */
+ 	for (i = 0; i < count; i++) {
+ 		ret = of_property_read_string_index(np, "source-thermal-zones",
+-						     i, &source_name);
++						    i, &source_name);
+ 		if (ret) {
+ 			pr_err("%pOFn: failed to read source zone %d\n", np, i);
+ 			goto free_tz_array;
+@@ -1168,36 +1919,72 @@ static struct thermal_zone_device *virt_tz_register(struct device_node *np)
+ 			goto free_tz_array;
+ 		}
+ 
++		/*
++		 * This pointer is not reference counted:
++		 * thermal_zone_get_zone_by_name() hands back the bare pointer, and
++		 * taking a reference is not an option because
++		 * thermal_zone_device_unregister() would then hang forever on
++		 * tz->removal rather than reach its kfree(tz).
++		 *
++		 * The lifetime is covered a level up instead:
++		 * virt_tz_link_sources() makes this driver a device-link consumer
++		 * of the platform device behind each real source, so the driver
++		 * core unbinds us - and virt_tz_remove() unregisters every virtual
++		 * zone - before that provider's own unbind frees the zones we point
++		 * at.  A source whose provider is not a platform device cannot be
++		 * linked; that case is warned about there, and remains the one where
++		 * unbinding the sensor driver while a virtual zone reads it would
++		 * leave this pointer dangling.
++		 */
+ 		virt->tz[i] = thermal_zone_get_zone_by_name(source_name_stable);
+ 		if (IS_ERR(virt->tz[i])) {
+ 			tz_type = of_find_thermal_zone_by_name(source_name_stable);
+ 
+-			if (tz_type == TZ_IS_VIRTUAL) {
+-				/* Virtual zones cannot use other virtual zones as sources */
+-				if (virtual_count < MAX_VIRTUAL_ZONES) {
+-					/* Reuse the stable copy we already made */
+-					virtual_zones[virtual_count] = source_name_stable;
+-					virtual_count++;
+-					source_name_stable = NULL;  /* Prevent double-free */
+-				} else if (virtual_count == MAX_VIRTUAL_ZONES) {
+-					pr_warn("%pOFn: too many virtual zone errors (>%d), some not reported\n", np, MAX_VIRTUAL_ZONES);
+-					virtual_count++;  /* Increment to avoid repeated warning */
+-				}
+-			} else if (tz_type == TZ_IS_REAL) {
+-				/* Real zone defined in DT but not registered yet - defer */
+-				pr_warn("%pOFn: source zone '%s' is not registered\n", np, source_name_stable);
+-				defer = true;
+-			} else {
+-				/* Zone not in DT - permanent configuration error */
++			if (tz_type == TZ_NOT_IN_DTS) {
++				/*
++				 * No usable node carries that name - absent, or
++				 * there but disabled or named too long for the
++				 * core to accept.  Nothing this driver can wait
++				 * for will change any of those, so treat it as
++				 * permanent.  The one case that escapes that
++				 * reasoning is a zone registered straight
++				 * through the core with no device tree node at
++				 * all, which could still appear later; waiting
++				 * on a name that may never exist is the worse
++				 * trade, and only deferred_probe_timeout would
++				 * bound the wait.
++				 *
++				 * Keep the first MAX_VIRTUAL_ZONES names to
++				 * print, but count them all: the report ends
++				 * with how many were left out, which it cannot
++				 * say if the counter saturates.
++				 */
+ 				if (notfound_count < MAX_VIRTUAL_ZONES) {
+ 					/* Reuse the stable copy we already made */
+ 					notfound_zones[notfound_count] = source_name_stable;
+-					notfound_count++;
+ 					source_name_stable = NULL;  /* Prevent double-free */
+-				} else if (notfound_count == MAX_VIRTUAL_ZONES) {
+-					pr_warn("%pOFn: too many notfound zone errors (>%d), some not reported\n", np, MAX_VIRTUAL_ZONES);
+-					notfound_count++;  /* Increment to avoid repeated warning */
+ 				}
++				notfound_count++;
++			} else {
++				/*
++				 * Described in DT but not registered yet.  A
++				 * virtual source is registered before the zones
++				 * that use it, so the usual cause is the source
++				 * still deferring - but not the only one.  A
++				 * virtual zone dropped past MAX_VIRTUAL_ZONES is
++				 * invisible to virt_tz_find_zone(), and a name
++				 * that collides case insensitively with another
++				 * zone makes thermal_zone_get_zone_by_name()
++				 * return -EEXIST; both land here and neither ever
++				 * resolves.  The binding names both, and says
++				 * this message points at the wrong thing for
++				 * them.
++				 */
++				pr_warn("%pOFn: %s source zone '%s' is not registered\n",
++					np,
++					tz_type == TZ_IS_VIRTUAL ? "virtual" : "real",
++					source_name_stable);
++				defer = true;
+ 			}
+ 
+ 			/* Free source_name_stable if we didn't store it in arrays */
+@@ -1208,29 +1995,28 @@ static struct thermal_zone_device *virt_tz_register(struct device_node *np)
+ 			continue;
+ 		}
+ 
++		/* A zone listed twice is counted twice by the averaging methods */
++		for (j = 0; j < i; j++) {
++			if (virt->tz[j] == virt->tz[i]) {
++				pr_warn("%pOFn: source zone '%s' is listed more than once\n",
++					np, source_name_stable);
++				break;
++			}
++		}
++
+ 		/* Zone found successfully, free the stable copy */
+ 		kfree(source_name_stable);
+ 	}
+ 
+ 	/* Report all errors after validation */
+-	if (virtual_count || notfound_count) {
+-		if (virtual_count) {
+-			pr_err("%pOFn: virtual zones cannot be used as sources: ", np);
+-			for (i = 0; (i < virtual_count) && (i < MAX_VIRTUAL_ZONES); i++)
+-				pr_cont("%s%s", i ? ", " : "", virtual_zones[i]);
+-			if (virtual_count > MAX_VIRTUAL_ZONES)
+-				pr_cont(" (and %d more)", virtual_count - MAX_VIRTUAL_ZONES);
+-			pr_cont("\n");
+-		}
+-
+-		if (notfound_count) {
+-			pr_err("%pOFn: source zones not found in device tree: ", np);
+-			for (i = 0; (i < notfound_count) && (i < MAX_VIRTUAL_ZONES); i++)
+-				pr_cont("%s%s", i ? ", " : "", notfound_zones[i]);
+-			if (notfound_count > MAX_VIRTUAL_ZONES)
+-				pr_cont(" (and %d more)", notfound_count - MAX_VIRTUAL_ZONES);
+-			pr_cont("\n");
+-		}
++	if (notfound_count) {
++		pr_err("%pOFn: no usable device tree node for source zones (absent, disabled, or name too long): ",
++		       np);
++		for (i = 0; (i < notfound_count) && (i < MAX_VIRTUAL_ZONES); i++)
++			pr_cont("%s%s", i ? ", " : "", notfound_zones[i]);
++		if (notfound_count > MAX_VIRTUAL_ZONES)
++			pr_cont(" (and %d more)", notfound_count - MAX_VIRTUAL_ZONES);
++		pr_cont("\n");
+ 
+ 		ret = -EINVAL;
+ 		goto free_tz_array;
+@@ -1248,24 +2034,112 @@ static struct thermal_zone_device *virt_tz_register(struct device_node *np)
+ 		goto free_tz_array;
+ 	}
+ 
+-	/* Validate trip count (GENMASK_ULL supports max 64 bits) */
+-	if (ntrips > 64) {
+-		pr_err("%pOFn: too many trip points (%d), maximum is 64\n", np, ntrips);
++	/* The core rejects more than this; say so before it does */
++	if (ntrips > MAX_TRIPS) {
++		pr_err("%pOFn: too many trip points (%d), maximum is %d\n",
++		       np, ntrips, MAX_TRIPS);
+ 		ret = -EINVAL;
+ 		kfree(trips);
+ 		goto free_tz_array;
+ 	}
+ 
+-	/* Read polling delays, set defaults if not specified */
++	/*
++	 * Read polling delays, defaulting when absent.
++	 *
++	 * Every error is treated as absent, which thermal_of does not do:
++	 * thermal_of_monitor_init() separates -EINVAL, meaning no such
++	 * property, from a malformed one and fails the zone for the latter.
++	 * So an empty or truncated 'polling-delay' is reported on a
++	 * sensor-backed zone and silently defaulted here.  The same goes for
++	 * 'time-constant-ms' and 'sample-interval-ms' below - but not for
++	 * 'coefficients' or 'source-weights', which do make the distinction,
++	 * because getting those wrong changes the temperature rather than the
++	 * poll rate.
++	 */
+ 	if (of_property_read_u32(np, "polling-delay-passive", &passive_delay))
+ 		passive_delay = 100;  /* Default: 100ms */
+ 
+ 	if (of_property_read_u32(np, "polling-delay", &polling_delay))
+ 		polling_delay = 1000;  /* Default: 1000ms */
+ 
++	/*
++	 * A zero passive delay latches the zone.  Only step_wise and
++	 * power_allocator ever set tz->passive, so a zone on bang_bang cannot
++	 * reach this at all; on the ones that can, monitor_thermal_zone() polls
++	 * at passive_delay_jiffies and has no fallback to the normal delay, and
++	 * thermal_zone_device_set_polling() cancels the work outright for a
++	 * delay of zero.  Nothing re-arms it afterwards for a zone with no
++	 * sensor driver of its own, so the trips stop being evaluated for good
++	 * while reads keep answering and the zone looks alive.  Fall back
++	 * rather than honour it.
++	 */
++	if (!passive_delay && polling_delay) {
++		pr_warn("%pOFn: 'polling-delay-passive' is 0, which would stop the zone polling for good once a passive trip is crossed; using 'polling-delay' (%u ms)\n",
++			np, polling_delay);
++		passive_delay = polling_delay;
++	}
++
++	/*
++	 * Time base for the stateful calculation methods.  Both are expressed
++	 * in real time so that the result does not depend on how often the zone
++	 * happens to be read.
++	 */
++	if (of_property_read_u32(np, "time-constant-ms", &virt->tau_ms))
++		virt->tau_ms = EMA_TAU_MS_DEFAULT;
++	virt->tau_ms = clamp_t(u32, virt->tau_ms, EMA_TAU_MS_MIN, EMA_TAU_MS_MAX);
++
++	if (of_property_read_u32(np, "sample-interval-ms", &virt->sample_interval_ms))
++		/*
++		 * 'polling-delay', deliberately, not the faster passive delay.
++		 * The reseed in virt_tz_apply_filter() triggers on a gap of 40
++		 * sample intervals, and tying the interval to the same delay
++		 * the core polls at outside the passive regime is what keeps
++		 * ordinary polling from ever reaching it: dj is then one
++		 * interval, not forty.
++		 * Following the passive delay instead would make any tree with
++		 * polling-delay > 40 x polling-delay-passive restart the window
++		 * on every non-passive poll, quietly turning the boxcar into a
++		 * pass-through until a passive trip latched.
++		 *
++		 * The cost is that the filter accepts one sample per
++		 * 'polling-delay' even while the core polls at the passive rate,
++		 * so a throttling zone evaluates its trips
++		 * 'polling-delay' / 'polling-delay-passive' times per sample -
++		 * ten at the defaults here.  ->get_trend carries the direction
++		 * across those evaluations, so the governor keeps pace with an
++		 * unfiltered zone instead of stepping once per sample; the tail
++		 * of that is up to one sample interval of held direction after
++		 * the movement stops, symmetric in both directions.
++		 *
++		 * A tree that wants the window itself to track the passive rate
++		 * can set 'sample-interval-ms' - but only while 'polling-delay'
++		 * stays within forty times it.  Past that the same reseed fires
++		 * on every ordinary poll, the window never holds more than the
++		 * sample just pushed, and the boxcar stops filtering at all:
++		 * exactly the degeneration this paragraph refuses to impose by
++		 * default, arrived at by hand.  Setting it to
++		 * 'polling-delay-passive' is safe at the defaults here, where
++		 * the ratio is ten, and unsafe as soon as 'polling-delay'
++		 * exceeds forty times the passive delay.
++		 */
++		virt->sample_interval_ms = polling_delay;
++	virt->sample_interval_ms = clamp_t(u32, virt->sample_interval_ms,
++					   SAMPLE_MS_MIN, SAMPLE_MS_MAX);
++
+ 	/* Parse thermal zone parameters (slope, offset, sustainable-power, etc.) */
+-	virt_tz_parse_params(np, &tzp);
++	ret = virt_tz_parse_params(np, &tzp);
++	if (ret)
++		goto free_trips;
+ 
++
++	/*
++	 * The ternary is load-bearing, not defensive.  GENMASK_ULL(-1, 0)
++	 * shifts by 64, which is undefined and in practice yields ~0ULL, and
++	 * thermal_zone_device_register_with_trips() rejects a zone whose
++	 * mask >> num_trips is non-zero - so a trip-less zone would never
++	 * register.  thermal_of.c computes exactly that and cannot register
++	 * one at all in 6.6.  Do not "simplify" this.
++	 */
+ 	mask = ntrips ? GENMASK_ULL(ntrips - 1, 0) : 0;
+ 
+ 	/* Register thermal zone */
+@@ -1278,15 +2152,68 @@ static struct thermal_zone_device *virt_tz_register(struct device_node *np)
+ 		goto free_trips;
+ 	}
+ 
+-	/* Enable thermal zone */
+-	ret = thermal_zone_device_enable(tz);
+-	if (ret) {
+-		pr_err("%pOFn: failed to enable thermal zone: %d\n", np, ret);
+-		virt_tz_unregister(tz);
+-		goto no_free_mark;
+-	}
++	/*
++	 * ->get_temp() reads the source zones, so a source's tz->lock is taken
++	 * nested inside this zone's.  Every zone the core registers shares one
++	 * lock class, so give virtual zones a class of their own with a
++	 * subclass equal to the zone's depth: edges always run from higher
++	 * depth to lower, so lockdep sees an acyclic graph and can validate the
++	 * nesting instead of reporting it as recursion.
++	 *
++	 * This is the earliest the driver can do it - tz does not exist until
++	 * the core returns it - but it does not cover everything.  By the time
++	 * the core returns, the zone is already in sysfs and on thermal_tz_list,
++	 * and thermal_zone_get_temp() gates only on device_is_registered(), not
++	 * on tz->mode, so a read of this zone's 'temp' arriving before this line
++	 * runs under the core's shared class.  Under PROVE_LOCKING that is
++	 * reported as recursion when the sources are real zones - two locks of
++	 * one class - or as a circular dependency when a source is another
++	 * virtual zone, which was re-keyed as it registered and has already
++	 * recorded the opposite edge.  6.6 offers no hook between the core's
++	 * mutex_init() and its device_register() to close that window, and the
++	 * driver never takes tz->lock itself, so mutex_lock_nested() is not an
++	 * alternative.  Functionally the read is fine either way: everything
++	 * ->get_temp() touches is set up before the zone is registered.
++	 *
++	 * The core walks into that window itself, and only one test stops it.
++	 * thermal_zone_device_register_with_trips() sets tz->need_update and
++	 * then consumes it at the end, so thermal_zone_device_update() runs
++	 * before it ever returns: it takes tz->lock, passes
++	 * thermal_zone_is_present() because list_add_tail() has already run,
++	 * and reaches __thermal_zone_device_update().  What stops it there is
++	 * thermal_zone_device_is_enabled() - tz->mode is still
++	 * THERMAL_DEVICE_DISABLED, which is the kzalloc zero, because this
++	 * driver leaves thermal_zone_device_enable() until after
++	 * virt_tz_register() has returned.  That call is placed late for an
++	 * unrelated reason, the source-pointer lifetime described where it is
++	 * made, and this is a second thing it happens to buy.  Moving it
++	 * earlier would put a ->get_temp() inside this window under the wrong
++	 * lock class.
++	 */
++	lockdep_set_class_and_subclass(&tz->lock, &virt_tz_lock_key, virt->depth);
+ 
+-	/* Verify governor assignment */
++	/*
++	 * A governor the core does not have leaves tz->governor NULL, and a zone
++	 * cannot be left that way: policy_show() and thermal_netlink both
++	 * dereference tz->governor->name with no NULL test, so any read of the
++	 * zone's 'policy' attribute would oops.  The core guards only the
++	 * throttle path (handle_non_critical_trips() falls back to
++	 * def_governor), so the zone itself has to go.
++	 *
++	 * Unreachable as the driver stands, and kept anyway.  valid_governors[]
++	 * is gated on the CONFIG_THERMAL_GOV_* symbols, so a name this build
++	 * does not have never reaches tzp.governor_name; __find_governor("")
++	 * then returns def_governor and tz->governor cannot be NULL.  This stays
++	 * because it is the last thing between a mistake in that list - a
++	 * governor added without its #ifdef, say - and a NULL dereference in
++	 * code this driver does not own, and because rejecting the zone is the
++	 * only answer available once the core has already published it.
++	 *
++	 * A governor added to the core later that this driver does not list
++	 * takes virt_tz_parse_params()'s unavailable-name arm, exactly as a
++	 * misspelling does: warned about, and the zone keeps the default
++	 * rather than being dropped.
++	 */
+ 	if (!tz->governor) {
+ 		if (tzp.governor_name[0] != '\0') {
+ 			pr_err("%pOFn: requested governor '%s' is not available\n", np, tzp.governor_name);
+@@ -1303,174 +2230,1140 @@ static struct thermal_zone_device *virt_tz_register(struct device_node *np)
+ free_trips:
+ 	kfree(trips);
+ free_tz_array:
++	kfree(virt->sorted);
++	kfree(virt->wbuf);
++	kfree(virt->temps);
++	kfree(virt->weights);
+ 	kfree(virt->tz);
+ free_virt:
+ 	of_node_put(virt->of_node);
+-	mutex_destroy(&virt->lock);
+ 	kfree(virt);
+ 
+ no_free_mark:
+ 	/* Free copied zone name strings */
+-	for (i = 0; (i < virtual_count) && (i < MAX_VIRTUAL_ZONES); i++)
+-		kfree(virtual_zones[i]);
+ 	for (i = 0; (i < notfound_count) && (i < MAX_VIRTUAL_ZONES); i++)
+ 		kfree(notfound_zones[i]);
+ 
+-	/* Mark zone as permanently failed on any error except defer */
+-	if (ret != -EPROBE_DEFER)
+-		mark_zone_permanent_fail(np->name);
+ 	return ERR_PTR(ret);
+ }
+ 
++/**
++ * enum virt_visit - DFS state while the virtual dependency graph is resolved
++ * @VIRT_UNVISITED: not looked at yet
++ * @VIRT_ACTIVE: currently on the DFS stack; reaching it again closes a cycle
++ * @VIRT_DONE: depth resolved
++ */
++enum virt_visit {
++	VIRT_UNVISITED = 0,
++	VIRT_ACTIVE,
++	VIRT_DONE,
++};
++
++/**
++ * struct virt_zone_node - One virtual zone while the graph is being resolved
++ * @np: Device tree node of the zone
++ * @depth: Depth in the virtual dependency graph
++ * @state: DFS state
++ * @rejected: Set once the zone can never register
++ */
++struct virt_zone_node {
++	struct device_node *np;
++	int depth;
++	enum virt_visit state;
++	bool rejected;
++};
++
++/**
++ * virt_tz_same_zone() - Are two node names one zone to the thermal core?
++ * @a: A device tree node name
++ * @b: A device tree node name
++ *
++ * A zone's identity in the thermal core is tz->type, which is the name it was
++ * registered with - thermal_zone_device_register_with_trips() rejects a name of
++ * THERMAL_NAME_LENGTH characters or more outright, so tz->type is always the
++ * whole name.  thermal_zone_get_zone_by_name() then matches it case
++ * insensitively, so two names differing only in case are one zone as far as the
++ * framework is concerned.
++ *
++ * A plain strcasecmp() is safe even though virt_tz_warn_foreign_collisions()
++ * passes names this driver never collected and never length-filtered.  The
++ * bound comes from @a alone: it is always a name virt_tz_probe() collected, so
++ * it is shorter than THERMAL_NAME_LENGTH and its NUL ends the comparison within
++ * that bound whatever @b is.  A @b of THERMAL_NAME_LENGTH characters or more
++ * therefore compares as different, which is the right answer - the core rejects
++ * such a name, so that node never becomes a zone there is anything to collide
++ * with.
++ *
++ * Return: true if the core could not tell the two names apart
++ */
++static bool virt_tz_same_zone(const char *a, const char *b)
++{
++	return !strcasecmp(a, b);
++}
++
++/**
++ * virt_tz_find_zone() - Find a virtual zone by name
++ * @zones: Array of all virtual zones found in DT
++ * @nzones: Number of entries in @zones
++ * @name: Thermal zone name to look for
++ *
++ * Return: index into @zones, or -1 if @name is not one of the virtual zones
++ */
++static int virt_tz_find_zone(struct virt_zone_node *zones, int nzones,
++			     const char *name)
++{
++	int i;
++
++	for (i = 0; i < nzones; i++) {
++		/*
++		 * Resolve the edge exactly the way the core will bind it at
++		 * runtime: thermal_zone_get_zone_by_name() compares the source
++		 * string against tz->type with strncasecmp() over
++		 * THERMAL_NAME_LENGTH, and tz->type is the node name in full
++		 * because a longer one is rejected at registration.  A plain
++		 * strcmp() here would miss a virtual source the core does bind,
++		 * leaving the consumer and its source on one lockdep subclass
++		 * and reinstating the recursive locking report this subclassing
++		 * exists to avoid.
++		 */
++		if (!strncasecmp(name, zones[i].np->name, THERMAL_NAME_LENGTH))
++			return i;
++	}
++
++	return -1;
++}
++
++/**
++ * virt_tz_resolve_depth() - Depth of a virtual zone in the dependency graph
++ * @zones: Array of all virtual zones found in DT
++ * @nzones: Number of entries in @zones
++ * @idx: Index of the zone to resolve
++ *
++ * A zone whose sources are all real thermal zones has depth 0; otherwise its
++ * depth is one more than that of its deepest virtual source.  The depth both
++ * orders registration - a source is registered before the zones that use it -
++ * and becomes the lockdep subclass of the zone's tz->lock.
++ *
++ * The walk is depth-first, so a zone reached while it is still on the stack -
++ * including one that lists itself as a source - closes a cycle.  Everything is
++ * decided from the device tree, so the result does not depend on the order in
++ * which the zones happen to be registered.
++ *
++ * Return: depth of the zone, or -ELOOP if it is in a dependency cycle or has
++ *         a source that is - the code propagates to every consumer, because
++ *         none of them can work either
++ */
++static int virt_tz_resolve_depth(struct virt_zone_node *zones, int nzones, int idx)
++{
++	const char *source_name;
++	int count, i, depth = 0;
++
++	if (zones[idx].state == VIRT_DONE)
++		return zones[idx].depth;
++
++	if (zones[idx].state == VIRT_ACTIVE)
++		return -ELOOP;
++
++	zones[idx].state = VIRT_ACTIVE;
++
++	count = of_property_count_strings(zones[idx].np, "source-thermal-zones");
++
++	for (i = 0; i < count; i++) {
++		int src, src_depth;
++
++		if (of_property_read_string_index(zones[idx].np,
++						  "source-thermal-zones",
++						  i, &source_name))
++			continue;
++
++		src = virt_tz_find_zone(zones, nzones, source_name);
++		if (src < 0)
++			continue;	/* real zone: contributes depth 0 */
++
++		src_depth = virt_tz_resolve_depth(zones, nzones, src);
++		if (src_depth < 0) {
++			depth = src_depth;
++			break;
++		}
++
++		depth = max(depth, src_depth + 1);
++	}
++
++	zones[idx].state = VIRT_DONE;
++	zones[idx].depth = depth;
++
++	return depth;
++}
++
++/**
++ * virt_tz_source_failed() - Does this zone depend on a zone that was rejected?
++ * @zones: Array of all virtual zones found in DT
++ * @nzones: Number of entries in @zones
++ * @idx: Index of the zone to check
++ * @name: Set to the name of the rejected source, if any
++ *
++ * Zones are registered in order of increasing depth and a consumer is always
++ * deeper than its sources, so by the time this runs every virtual source of
++ * @idx has already been through the loop and carries a final verdict.  Reading
++ * that verdict straight out of @zones needs no bookkeeping of its own.
++ *
++ * Return: true if one of the sources was rejected
++ */
++static bool virt_tz_source_failed(struct virt_zone_node *zones, int nzones,
++				  int idx, const char **name)
++{
++	const char *source_name;
++	int count, i, src;
++
++	count = of_property_count_strings(zones[idx].np, "source-thermal-zones");
++
++	for (i = 0; i < count; i++) {
++		if (of_property_read_string_index(zones[idx].np,
++						  "source-thermal-zones",
++						  i, &source_name))
++			continue;
++
++		src = virt_tz_find_zone(zones, nzones, source_name);
++		if (src >= 0 && zones[src].rejected) {
++			*name = source_name;
++			return true;
++		}
++	}
++
++	return false;
++}
++
++/**
++ * virt_tz_link_sources() - Tie this driver's lifetime to its sensor providers
++ * @pdev: This driver's platform device
++ * @tz: The zone that just registered, whose source pointers are at risk
++ * @zones: Array of all virtual zones found in DT
++ * @nzones: Number of entries in @zones
++ * @idx: Index of a zone that registered successfully
++ *
++ * Return: 0; -EPROBE_DEFER if the zone ends up with no link protecting it -
++ * because a provider is going away, because a provider is in the middle of its
++ * own ->probe and may already own the zone we just resolved, because a source
++ * zone was freed under us, or because the link could not be allocated at all -
++ * in which case the caller must discard the whole attempt, the zone being
++ * already registered and holding pointers nothing is keeping alive; or -EAGAIN
++ * if the only thing in the way is a provider parked at DL_DEV_PROBING with no
++ * driver yet, which the caller should retry but must put a deadline on, because
++ * that state can persist for the life of the boot.
++ *
++ * Call this as soon as that zone registers, not once the whole set has.  The
++ * zone is registered and reachable by the time virt_tz_register() returns, and
++ * until its link exists device_links_busy() is false for the provider, so the
++ * provider's unbind would skip device_links_unbind_consumers() and free the
++ * source zones underneath a live reader.
++ *
++ * thermal_zone_get_zone_by_name() hands back a bare pointer to a source zone
++ * and thermal_zone_device_unregister() ends in kfree(tz), so a source that goes
++ * away while a virtual zone still points at it leaves a dangling pointer for
++ * the next poll to dereference.  Nothing in 6.6 reports a zone going away: its
++ * struct device has no parent, only a class; there is no notifier; and holding
++ * a reference is not an option, because thermal_zone_device_unregister() waits
++ * on tz->removal, which thermal_release() only completes once the device
++ * refcount reaches zero - so an extra reference hangs the unbind instead.
++ *
++ * What does exist is the driver core's supplier/consumer machinery.  Add a
++ * managed device link from this driver to the device that owns each real source
++ * zone - the provider named by that zone's 'thermal-sensors' phandle - so that
++ * device_links_unbind_consumers() unbinds this driver first, virt_tz_remove()
++ * unregisters every virtual zone, and only then does the provider's own unbind
++ * free the zones we pointed at.  Only DL_FLAG_MANAGED links get that treatment,
++ * which is what device_link_add() creates when DL_FLAG_STATELESS is not asked
++ * for.
++ *
++ * DL_FLAG_AUTOPROBE_CONSUMER makes the cycle symmetric: the link survives our
++ * unbind and device_links_driver_cleanup() parks it at DL_STATE_DORMANT, so
++ * when the provider binds again device_links_driver_bound() queues us for
++ * probing and the virtual zones come back.  DL_FLAG_AUTOREMOVE_CONSUMER would
++ * drop the link instead and leave the zones gone until someone rebinds this
++ * driver by hand; the two flags are mutually exclusive in device_link_add().
++ *
++ * A source that is itself a virtual zone needs no link: this driver owns its
++ * lifetime and tears it down in reverse order.
++ *
++ * One gap remains, in which a source keeps the bare, unreferenced pointer it
++ * always had: the provider is not a platform device.  It is resolved with
++ * of_find_device_by_node(), which is
++ * bus_find_device_by_of_node(&platform_bus_type, np) - the platform bus and
++ * nothing else - so a sensor provided from SPMI, I2C or SPI is not found and no
++ * link is made.  On this board pms405-thermal is SPMI-backed, so a virtual zone
++ * naming it as a source would land here; nothing does today.  Every affected
++ * source is warned about below, and for those the pointer is safe until
++ * somebody unbinds that particular sensor driver and unsafe from then on.
++ *
++ * Closing that last one needs either a bus-agnostic of_node-to-device lookup,
++ * which the kernel does not export, or - properly - a notification from the
++ * thermal core when a zone goes away.  6.6 has none: thermal_notify_tz_delete()
++ * is netlink only, and a zone's struct device has no parent to hang a link on,
++ * only a class.
++ *
++ * A source named in another case used to fall in this hole too, because the
++ * node was looked up with of_get_child_by_name(), which matches exactly.
++ * of_find_thermal_zone_node() resolves it the way the core binds it, so those
++ * sources now get their link like any other.
++ */
++static int virt_tz_link_sources(struct platform_device *pdev,
++				struct thermal_zone_device *tz,
++				struct virt_zone_node *zones, int nzones,
++				int idx)
++{
++	struct virt_tz *virt = tz->devdata;
++	struct device_node *zone_np;
++	struct platform_device *sensor;
++	struct device_link *link;
++	const char *name;
++	int count, nsensors, i, j, ret = 0;
++
++	count = of_property_count_strings(zones[idx].np, "source-thermal-zones");
++
++	for (i = 0; i < count; i++) {
++		struct thermal_zone_device *now;
++
++		if (of_property_read_string_index(zones[idx].np,
++						  "source-thermal-zones",
++						  i, &name))
++			continue;
++
++		if (virt_tz_find_zone(zones, nzones, name) >= 0)
++			continue;	/* virtual source: ours to tear down */
++
++		/*
++		 * Resolve the node the same way the source itself was resolved,
++		 * so a name the core binds case-insensitively still finds its
++		 * provider here and gets its link.
++		 */
++		zone_np = of_find_thermal_zone_node(name);
++		if (!zone_np) {
++			/*
++			 * A registered zone with no device tree node behind it
++			 * - one registered directly through the core rather
++			 * than through thermal_of.  There is no provider to
++			 * find, so it cannot be linked; say so, like the two
++			 * cases below do.
++			 *
++			 * Do not skip the rest: this is the one source that no
++			 * link can ever protect, which makes the lookup after
++			 * the sensor loop the only check it gets.  Falling
++			 * through costs nothing, because
++			 * of_count_phandle_with_args() returns -ENOENT for a
++			 * NULL node, so the loop does not run, and
++			 * of_node_put() ignores NULL.
++			 */
++			dev_warn(&pdev->dev,
++				 "%pOFn: source '%s' has no device tree node, so it cannot be tied to this driver's lifetime; that zone is safe only until the source's driver unbinds\n",
++				 zones[idx].np, name);
++		}
++
++		/*
++		 * A zone node may name more than one sensor - thermal_of's own
++		 * lookup iterates them - and whichever of them registered the
++		 * zone owns its lifetime, so link every one.  This has to go
++		 * through the cells-aware accessor: 'thermal-sensors' entries
++		 * are <phandle, id> tuples, so of_parse_phandle() would take
++		 * the id of one entry for the phandle of the next.
++		 */
++		nsensors = of_count_phandle_with_args(zone_np, "thermal-sensors",
++						      "#thermal-sensor-cells");
++
++		for (j = 0; j < nsensors; j++) {
++			enum dl_dev_state status;
++			struct of_phandle_args spec;
++
++			if (of_parse_phandle_with_args(zone_np,
++						       "thermal-sensors",
++						       "#thermal-sensor-cells",
++						       j, &spec))
++				continue;
++
++			sensor = of_find_device_by_node(spec.np);
++			of_node_put(spec.np);
++			if (!sensor) {
++				dev_warn(&pdev->dev,
++					 "%pOFn: source '%s' has no platform device behind it; that zone cannot be tied to this driver's lifetime\n",
++					 zones[idx].np, name);
++				continue;
++			}
++
++			/*
++			 * device_link_init_status() parks a link on an unbound
++			 * supplier at DL_STATE_DORMANT, and when this probe
++			 * then succeeds device_links_driver_bound() hits its
++			 * WARN_ON(status != DL_STATE_CONSUMER_PROBE).  A zone
++			 * naming several sensors can have one of them unbound,
++			 * so check before asking.
++			 *
++			 * Judge the provider by links.status rather than by
++			 * dev->driver, which is set before ->probe runs and
++			 * cleared only after devres_release_all() has already
++			 * freed whatever zones the provider registered - so it
++			 * answers neither question asked here.
++			 *
++			 * Read once.  Every writer stores it under
++			 * device_links_write_lock(), which this driver does not
++			 * hold, so a second read could return a different state
++			 * and the two tests below would disagree - a provider
++			 * going DRIVER_BOUND to UNBINDING between them would
++			 * take the skip path, which is the one outcome this is
++			 * here to prevent.
++			 *
++			 * Still probing, or on its way out: do not link it, and
++			 * do not carry on either.  A link to a probing supplier
++			 * is born DL_STATE_CONSUMER_PROBE, indistinguishable
++			 * from a healthy one, and if that probe then fails the
++			 * supplier takes the probe_failed path - which frees its
++			 * zones through devres but never calls
++			 * device_links_unbind_consumers() - so nothing would
++			 * take this driver down afterwards.  The lookup at the
++			 * end of the loop cannot save us there either, because
++			 * the failure happens after it.  So defer instead.
++			 *
++			 * The two states need different answers, though.
++			 * DL_DEV_UNBINDING always resolves - the unbind ends at
++			 * device_links_driver_cleanup(), which sets
++			 * DL_DEV_NO_DRIVER - so deferring on it is bounded by
++			 * the provider itself and is reported as such.
++			 *
++			 * DL_DEV_PROBING does not.  device_links_check_suppliers()
++			 * sets it unconditionally and its caller returns straight
++			 * out on -EPROBE_DEFER, never reaching probe_failed where
++			 * device_links_no_driver() would clear it - so a provider
++			 * waiting on a supplier of its own is parked there with
++			 * nothing running, indefinitely.  Deferring on that
++			 * without a way out would cost every zone on the board
++			 * for the whole boot.  Report it separately so the caller
++			 * can put a deadline on it.
++			 *
++			 * A deadline alone would not be safe, though.  It is a
++			 * property of the machine's uptime, not of the provider:
++			 * deferred_probe_timeout_work_func() zeroes
++			 * driver_deferred_probe_timeout about ten seconds after
++			 * late_initcall and nothing restores it, so from then on
++			 * driver_deferred_probe_check_state() is terminal for the
++			 * life of the boot.  Every provider that starts probing
++			 * after that - every module load, every sysfs bind - is
++			 * genuinely inside ->probe with the deadline already
++			 * behind it, and letting those through is exactly the
++			 * use-after-free this arm exists to stop.
++			 *
++			 * dev->driver separates the two, and this is the one
++			 * place it can be trusted: really_probe() returns on
++			 * device_links_check_suppliers()' -EPROBE_DEFER before
++			 * reaching 're_probe: dev->driver = drv', so inside
++			 * DL_DEV_PROBING a NULL driver means parked at its own
++			 * supplier check - no ->probe body has run, no zone of
++			 * ours can have been registered by it, and letting it go
++			 * unlinked costs nothing.  A non-NULL driver means the
++			 * provider is really executing ->probe and may own the
++			 * zone this driver just resolved, so that one defers with
++			 * no deadline at all.
++			 *
++			 * The pair is not read atomically.  Status first, driver
++			 * second is the conservative order: a provider that
++			 * starts running between the two reads shows a non-NULL
++			 * driver and defers.  The only window that reads PROBING
++			 * with a NULL driver on a running provider lies between
++			 * check_suppliers() returning 0 and that assignment,
++			 * where it has executed no probe code.
++			 */
++			status = READ_ONCE(sensor->dev.links.status);
++
++			if (status == DL_DEV_UNBINDING) {
++				dev_warn(&pdev->dev,
++					 "%pOFn: the provider of source '%s' is unbinding; retrying\n",
++					 zones[idx].np, name);
++				put_device(&sensor->dev);
++				ret = -EPROBE_DEFER;
++				continue;
++			}
++
++			if (status == DL_DEV_PROBING) {
++				bool parked = !READ_ONCE(sensor->dev.driver);
++
++				dev_warn(&pdev->dev,
++					 "%pOFn: the provider of source '%s' is %s; retrying\n",
++					 zones[idx].np, name,
++					 parked ? "waiting on a supplier of its own"
++						: "still probing");
++				put_device(&sensor->dev);
++
++				if (!parked) {
++					ret = -EPROBE_DEFER;
++					continue;
++				}
++
++				/* Do not weaken a defer that has no deadline */
++				if (!ret)
++					ret = -EAGAIN;
++				continue;
++			}
++
++			/*
++			 * Never bound, or unbound a while ago.  Skip rather than
++			 * defer: a zone may legitimately name a sensor whose
++			 * driver is not built in at all, and deferring on that
++			 * would cost every zone on the board.  If the provider
++			 * is instead one that has just failed or unbound, its
++			 * zones are usually already gone and the lookup at the
++			 * end of the loop catches that - usually, because
++			 * probe_failed sets NO_DRIVER before it runs
++			 * devres_release_all(), so a provider caught in that
++			 * window still shows its zones as live and frees them
++			 * immediately after.  NO_DRIVER cannot tell "never
++			 * bound" from "just failed", and deferring on it would
++			 * break the multi-sensor case above, so this narrow
++			 * window is knowingly left open.
++			 */
++			if (status != DL_DEV_DRIVER_BOUND) {
++				dev_warn(&pdev->dev,
++					 "%pOFn: the provider of source '%s' is not bound; leaving that one unlinked\n",
++					 zones[idx].np, name);
++				put_device(&sensor->dev);
++				continue;
++			}
++
++			link = device_link_add(&pdev->dev, &sensor->dev,
++					       DL_FLAG_AUTOPROBE_CONSUMER);
++			if (!link) {
++				/*
++				 * Two things can bring us here.  Most of
++				 * device_link_add()'s NULL returns are excluded:
++				 * the flags are a compile-time constant,
++				 * consumer and supplier differ,
++				 * DL_FLAG_RPM_ACTIVE is not asked for, and a bare
++				 * platform device with no device tree node cannot
++				 * be a supplier of the sensor, so
++				 * device_is_dependent() is false.  What is left
++				 * is kzalloc() or device_register() failing - out
++				 * of memory - and !device_pm_initialized(), which
++				 * the DL_DEV_DRIVER_BOUND test above cannot rule
++				 * out: that read is deliberately unlocked (see
++				 * the comment on it), so a supplier that has
++				 * since entered device_del() has already had
++				 * device_pm_remove() clear in_dpm_list.  NULL
++				 * then means the supplier is going away.
++				 *
++				 * Discard the attempt rather than carry on.  The
++				 * link is the only thing that makes
++				 * device_links_busy() true for the provider, so
++				 * without it the provider's unbind skips
++				 * device_links_unbind_consumers() and devres
++				 * frees the source zones while this zone is
++				 * still polling them - and the lookup after this
++				 * loop cannot catch that, because it detects a
++				 * source that has already gone, not one that
++				 * will.  Proceeding would report success with
++				 * the only lifetime protection missing.
++				 *
++				 * Deferring is safe: retries are driven by other
++				 * devices binding, not scheduled by this driver,
++				 * so there is no spin, and memory that has
++				 * recovered by the next attempt gets a fully
++				 * linked set.  This is the same answer the arm
++				 * below gives a link that exists but was born in
++				 * the wrong state, which is a milder condition.
++				 *
++				 * This is deliberately harsher than the driver's
++				 * other allocation failures, which reject the one
++				 * zone and let the rest register: here the whole
++				 * probe rolls back.  The asymmetry is the price of
++				 * the rollback being all-or-nothing.  Where a retry
++				 * follows it buys a fully linked set instead of a
++				 * board silently short of one zone; post-boot,
++				 * where this arm deliberately does not consult
++				 * driver_deferred_probe_check_state(), it leaves no
++				 * zones at all until something else triggers the
++				 * deferred list.
++				 */
++				dev_warn(&pdev->dev,
++					 "%pOFn: could not link to the provider of source '%s'; discarding this attempt\n",
++					 zones[idx].np, name);
++				ret = -EPROBE_DEFER;
++			} else if (READ_ONCE(link->status) != DL_STATE_CONSUMER_PROBE) {
++				/*
++				 * A link made during this driver's own probe is born
++				 * at DL_STATE_CONSUMER_PROBE.  Anything else means the
++				 * provider is already going away, so the link protects
++				 * nothing - while the zone just registered holds bare
++				 * pointers into zones that are being freed, and is
++				 * about to be enabled on them.
++				 *
++				 * This is not redundant with the DRIVER_BOUND test
++				 * above, it is the other half of it.  That read is
++				 * taken without device_links_write_lock(), so it can go
++				 * stale: the only exit from DRIVER_BOUND is
++				 * device_links_busy() setting DL_DEV_UNBINDING, and
++				 * that runs under the same lock device_link_add() takes.
++				 * Whichever wins the race, the outcome is safe - if the
++				 * link is created first it is born CONSUMER_PROBE, and
++				 * device_links_busy() then sees it and has the provider
++				 * unbind this driver before freeing anything; if
++				 * device_links_busy() gets there first the link is born
++				 * SUPPLIER_UNBIND and this test catches it.
++				 *
++				 * It cannot fire for a provider that is simply healthy:
++				 * device_links_check_suppliers() forced every
++				 * pre-existing managed supplier link to CONSUMER_PROBE
++				 * before this probe was allowed to start, and
++				 * device_link_add() leaves an already-managed link's
++				 * status alone, so naming one sensor several times - as
++				 * this board does - reuses that same status.
++				 *
++				 * Throw the whole attempt away.  The link stays, so
++				 * device_links_driver_bound() queues this driver again
++				 * as soon as the provider rebinds.
++				 */
++				dev_warn(&pdev->dev,
++					 "%pOFn: the provider of source '%s' is going away; discarding this attempt and retrying once it is back\n",
++					 zones[idx].np, name);
++				ret = -EPROBE_DEFER;
++			}
++
++			put_device(&sensor->dev);
++		}
++
++		/*
++		 * Confirm that the zone this source resolved to is still the zone
++		 * that name refers to - for every source, whether or not anything
++		 * linked.
++		 *
++		 * A link is not proof on its own.  device_link_add() cannot tell a
++		 * healthy provider from one in the middle of its own probe:
++		 * really_probe() sets dev->driver before calling ->probe, and
++		 * device_link_init_status() maps a probing supplier with a probing
++		 * consumer to DL_STATE_CONSUMER_PROBE - the same status a bound one
++		 * gives.  Should that probe then fail, the supplier takes the
++		 * probe_failed path, which runs device_links_no_driver() and
++		 * device_unbind_cleanup() - so devres_release_all() frees every zone
++		 * it registered - and, unlike an unbind, never calls
++		 * device_links_unbind_consumers().  Nothing would take this driver
++		 * down, and the zone just registered would poll freed memory for the
++		 * rest of the boot.
++		 *
++		 * The absence of a link says no more: dev->driver reads NULL only
++		 * after device_unbind_cleanup() has already run devres_release_all().
++		 *
++		 * So ask the core, which is the only thing that knows:
++		 * thermal_zone_device_unregister() takes a zone off thermal_tz_list
++		 * before freeing it.  Comparing the pointer rather than just testing
++		 * for success also catches a same-named zone that another provider
++		 * registered in the meantime.
++		 *
++		 * The same zone means nothing was freed.  The pointer may still be
++		 * unlinkable - warned about above, and the documented cost of a
++		 * source this driver cannot tie itself to - but it is alive.
++		 * Anything else means it is dead, so discard the attempt; the next
++		 * one resolves the source itself and takes the existing
++		 * not-registered path, which terminates without a timeout.
++		 *
++		 * This does not close the window: a supplier that fails after the
++		 * check still frees its zones behind us.  6.6 has no zone-removal
++		 * notification, so that residue cannot be closed from here.
++		 */
++		now = thermal_zone_get_zone_by_name(name);
++		if (IS_ERR(now) || now != virt->tz[i]) {
++			dev_warn(&pdev->dev,
++				 "%pOFn: source '%s' is no longer the zone this one resolved - it went away, or another now answers to that name; discarding the attempt\n",
++				 zones[idx].np, name);
++			ret = -EPROBE_DEFER;
++		}
++
++		of_node_put(zone_np);
++	}
++
++	return ret;
++}
++
++/**
++ * virt_tz_warn_dt_ordering() - Name the sensor zones thermal_of could not reach
++ * @dev: this driver's device, for the message
++ *
++ * A virtual zone node deliberately carries no 'thermal-sensors', and
++ * of_thermal_zone_find() does not tolerate such a child: it walks the available
++ * children of /thermal-zones looking for the zone that belongs to the sensor
++ * being registered and, on the first child that has no 'thermal-sensors', logs
++ * "missing thermal sensor" and abandons the entire search.  Every sensor whose
++ * own zone sits after that child therefore never gets a zone at all.
++ *
++ * Nothing here can prevent that - every sensor has already tried by the time
++ * this driver probes - but the core's message names the node it stopped on
++ * rather than the zones that were lost, and a sensor that has no zone at all
++ * lands on the same message, so the report points away from the real cause.
++ * Name the casualties instead.
++ */
++static void virt_tz_warn_dt_ordering(struct device *dev)
++{
++	struct device_node *np, *child, *blocker = NULL;
++
++	np = of_find_node_by_path("/thermal-zones");
++	if (!np)
++		return;
++
++	for_each_available_child_of_node(np, child) {
++		/* The test of_thermal_zone_find() gives up on */
++		if (of_count_phandle_with_args(child, "thermal-sensors",
++					       "#thermal-sensor-cells") <= 0) {
++			if (!blocker)
++				blocker = of_node_get(child);
++			continue;
++		}
++
++		if (blocker)
++			dev_err(dev,
++				"%pOFn: thermal_of stops at '%pOFn' before reaching this zone, so its sensor has no thermal zone - place every virtual zone after all sensor-backed zones\n",
++				child, blocker);
++	}
++
++	of_node_put(blocker);
++	of_node_put(np);
++}
++
++/**
++ * virt_tz_warn_foreign_collisions() - Warn about names shared with real zones
++ * @dev: this driver's device, for the message
++ * @zones: the virtual zones collected from the device tree
++ * @nzones: number of entries in @zones
++ *
++ * virt_tz_probe() compares the virtual zones with each other, which leaves the
++ * other half of the problem: a virtual zone whose name collides
++ * case-insensitively with a sensor-backed zone breaks in exactly the same way,
++ * because thermal_zone_get_zone_by_name() then finds two and returns -EEXIST.
++ * That one is worse, in fact - it takes the real zone's other in-kernel users
++ * down with it - so give it the same warning.
++ *
++ * Only children carrying 'thermal-sensors' are compared: a node the core never
++ * registers cannot collide with anything, and a virtual zone never carries that
++ * property, so this cannot re-report a pair the caller already did.
++ */
++static void virt_tz_warn_foreign_collisions(struct device *dev,
++					    struct virt_zone_node *zones,
++					    int nzones)
++{
++	struct device_node *tz_np, *child;
++	int i;
++
++	tz_np = of_find_node_by_path("/thermal-zones");
++	if (!tz_np)
++		return;
++
++	for_each_available_child_of_node(tz_np, child) {
++		if (of_count_phandle_with_args(child, "thermal-sensors",
++					       "#thermal-sensor-cells") <= 0)
++			continue;
++
++		for (i = 0; i < nzones; i++)
++			if (virt_tz_same_zone(zones[i].np->name, child->name))
++				dev_warn(dev,
++					 "%pOFn and %pOFn are one zone to the thermal core; neither can be used in another zone's 'source-thermal-zones'\n",
++					 zones[i].np, child);
++	}
++
++	of_node_put(tz_np);
++}
++
+ /**
+  * virt_tz_probe() - Platform driver probe
++ * @pdev: The driver's own platform device
++ *
++ * Collects every virtual zone described in the device tree, resolves the
++ * dependency graph between them - rejecting cycles and chains longer than
++ * MAX_VIRT_DEPTH + 1 zones - and registers them in order of increasing depth,
++ * so a virtual zone is always registered before any zone that uses it as a
++ * source.  Whether a configuration is accepted therefore does not depend on
++ * the order of the nodes in the device tree.
++ *
++ * The attempt is all or nothing, which costs more than it looks: one source
++ * that never registers holds back every virtual zone until the deferred-probe
++ * window closes, and a module loaded after boot has no window left to use.
++ * If any zone still has to defer, every zone
++ * registered so far is unregistered again and -EPROBE_DEFER is returned, so a
++ * failed probe never leaves a half-built set behind and nothing has to be
++ * remembered between attempts.  Deciding when to give up on a source that never
++ * appears is the driver core's job, via deferred_probe_timeout.
++ *
++ * A zone that can never work - described wrongly, or built on a source that was
++ * itself rejected - is skipped, and the zones that do work are still registered.
++ * A transient failure such as -ENOMEM is skipped the same way rather than
++ * retried: at late_initcall it means the system is already failing, and holding
++ * every other zone hostage to it would be the worse outcome.
+  */
+ static int virt_tz_probe(struct platform_device *pdev)
+ {
+ 	struct device_node *np, *child;
++	struct virt_zone_node *zones;
++	struct virt_tz_data *data;
+ 	struct thermal_zone_device *tz;
+-	int skipped;
+-	int i;
+-	bool need_defer = false;
+-	const char *defer_zone_name = NULL;
++	const char *failed_source;
++	int nzones = 0, skipped = 0;
++	int depth, i, j, ret = 0;
++	int defer_state = 0;
+ 
+-	np = of_find_node_by_name(NULL, "thermal-zones");
++	np = of_find_node_by_path("/thermal-zones");
+ 	if (!np) {
+ 		dev_info(&pdev->dev, "No thermal-zones node found\n");
+ 		return -ENODEV;
+ 	}
+ 
++	zones = kcalloc(MAX_VIRTUAL_ZONES, sizeof(*zones), GFP_KERNEL);
++	if (!zones) {
++		of_node_put(np);
++		return -ENOMEM;
++	}
++
++	/* Collect every virtual zone described in DT */
+ 	for_each_available_child_of_node(np, child) {
+ 		if (!of_device_is_compatible(child, "virtual-thermal-zone"))
+ 			continue;
+ 
+-		/* Skip zones that are permanently failed */
+-		if (is_zone_permanent_fail(child->name)) {
++		/*
++		 * A node that also carries 'thermal-sensors' is a sensor-backed
++		 * zone and belongs to thermal_of, which claims it on that
++		 * property alone - of_thermal_zone_find() never looks at
++		 * 'compatible'.  Registering it here as well would produce two
++		 * zones with the same name, one aggregating and one reading the
++		 * sensor, which cannot be what the device tree meant.
++		 */
++		if (of_property_present(child, "thermal-sensors")) {
++			dev_warn(&pdev->dev,
++				 "%pOFn: has 'thermal-sensors', so thermal_of owns it; ignoring the virtual-thermal-zone compatible\n",
++				 child);
+ 			continue;
+ 		}
+ 
+-		/* Skip zones that are already successfully registered */
+-		if (is_zone_already_registered(child->name)) {
+-			dev_dbg(&pdev->dev, "%pOFn: already registered, skipping\n", child);
++		/*
++		 * thermal_zone_device_register_with_trips() refuses a name of
++		 * THERMAL_NAME_LENGTH characters or more outright, so such a
++		 * zone can never exist.  Drop it here with one clear message
++		 * rather than let it reach registration, where the core's
++		 * "Thermal zone name too long" and this driver's "failed to
++		 * register ... -22" would both fire for the same cause.
++		 */
++		if (strlen(child->name) >= THERMAL_NAME_LENGTH) {
++			dev_warn(&pdev->dev,
++				 "%pOFn: name is %zu characters, the thermal core accepts at most %d, skipping\n",
++				 child, strlen(child->name),
++				 THERMAL_NAME_LENGTH - 1);
+ 			continue;
+ 		}
+ 
+-		tz = virt_tz_register(child);
+-		if (IS_ERR(tz)) {
+-			int err = PTR_ERR(tz);
+-
+-			if (err == -EPROBE_DEFER) {
+-				/* Increment defer count */
+-				increment_zone_defer_count(child->name);
+-
+-				/* Check if just exceeded limit */
+-				if (get_zone_defer_count(child->name) >= MAX_DEFER_COUNT) {
+-					/* Print warning only once and mark as permanent fail */
+-					dev_warn(&pdev->dev, "%pOFn: exceeded maximum defer attempts (%d), skipping registration due to missing dependencies\n",
+-						 child, MAX_DEFER_COUNT);
+-					mark_zone_permanent_fail(child->name);
+-					continue;
+-				}
+-
+-				/* Still under limit - defer probe */
+-				defer_zone_name = child->name;
+-				need_defer = true;
+-				of_node_put(child);
+-				break;
+-			}
++		if (nzones == MAX_VIRTUAL_ZONES) {
++			dev_err(&pdev->dev,
++				"More than %d virtual thermal zones, ignoring '%pOFn'\n",
++				MAX_VIRTUAL_ZONES, child);
+ 			continue;
+ 		}
+ 
+-		/* Track successfully registered zone */
+-		if (global_registered_count < MAX_VIRTUAL_ZONES) {
+-			global_registered_zones[global_registered_count++] = tz;
+-		} else {
+-			/* Exceeded maximum tracked zones - unregister immediately */
+-			dev_err(&pdev->dev, "Exceeded maximum of %d virtual thermal zones, unregistering '%s'\n",
+-				MAX_VIRTUAL_ZONES,
+-				child->name);
+-			virt_tz_unregister(tz);
+-		}
++		zones[nzones].np = of_node_get(child);
++		zones[nzones].state = VIRT_UNVISITED;
++		nzones++;
+ 	}
+ 
+ 	of_node_put(np);
+ 
+-	/* Handle defer: keep successfully registered zones */
+-	if (need_defer)
+-		return -EPROBE_DEFER;
+-
+-	/* Get count of permanently failed zones */
+-	skipped = zone_permanent_fail_count();
+-
+-	/* Check for complete failure: no zones found at all */
+-	if (skipped == 0 && global_registered_count == 0) {
++	if (!nzones) {
+ 		dev_info(&pdev->dev, "No virtual thermal zones found\n");
++		kfree(zones);
+ 		return -ENODEV;
+ 	}
+ 
+-	/* Check if nothing registered */
+-	if (global_registered_count == 0) {
+-		dev_info(&pdev->dev, "No zones successfully registered (skipped: %d)\n", skipped);
+-		/* All zones are permanently failed, clean up everything */
+-		dev_info(&pdev->dev, "All zones permanently failed, cleaning up\n");
+-		cleanup_global_defer_list();
+-		return -ENODEV;
++	/*
++	 * Two nodes can be one zone to the thermal core, which matches a zone
++	 * name case insensitively.  The core is content with that - tz->type is an
++	 * attribute, not a key - and both zones register and work.  What breaks
++	 * is everything that identifies a zone by name: neither can be named in
++	 * another zone's 'source-thermal-zones', because the lookup matches both
++	 * and returns -EEXIST, and userspace that goes by 'type' cannot tell
++	 * them apart.  Warn rather than reject - dropping a zone the device tree
++	 * asked for would be the worse surprise.
++	 */
++	for (i = 0; i < nzones; i++)
++		for (j = i + 1; j < nzones; j++)
++			if (virt_tz_same_zone(zones[i].np->name,
++					      zones[j].np->name))
++				dev_warn(&pdev->dev,
++					 "%pOFn and %pOFn are one zone to the thermal core; neither can be used in another zone's 'source-thermal-zones'\n",
++					 zones[i].np, zones[j].np);
++
++	virt_tz_warn_foreign_collisions(&pdev->dev, zones, nzones);
++
++	data = kzalloc(struct_size(data, zone, nzones), GFP_KERNEL);
++	if (!data) {
++		ret = -ENOMEM;
++		goto out_put;
++	}
++
++	/* Resolve the dependency graph before registering anything */
++	for (i = 0; i < nzones; i++) {
++		depth = virt_tz_resolve_depth(zones, nzones, i);
++
++		if (depth == -ELOOP) {
++			dev_err(&pdev->dev,
++				"%pOFn: in or downstream of a source-thermal-zones dependency cycle, skipping\n",
++				zones[i].np);
++			zones[i].rejected = true;
++			skipped++;
++		} else if (depth > MAX_VIRT_DEPTH) {
++			dev_err(&pdev->dev,
++				"%pOFn: chain of %d virtual zones, maximum is %d, skipping\n",
++				zones[i].np, depth + 1, MAX_VIRT_DEPTH + 1);
++			zones[i].rejected = true;
++			skipped++;
++		}
++	}
++
++	/*
++	 * Register by increasing depth, so every virtual source is registered
++	 * before the zone that consumes it.
++	 */
++	for (depth = 0; depth <= MAX_VIRT_DEPTH; depth++) {
++		for (i = 0; i < nzones; i++) {
++			if (zones[i].rejected || zones[i].depth != depth)
++				continue;
++
++			/* A zone built on a rejected source can never work */
++			if (virt_tz_source_failed(zones, nzones, i,
++						  &failed_source)) {
++				dev_err(&pdev->dev,
++					"%pOFn: source zone '%s' was rejected, skipping\n",
++					zones[i].np, failed_source);
++				zones[i].rejected = true;
++				skipped++;
++				continue;
++			}
++
++			tz = virt_tz_register(zones[i].np, depth);
++			if (!IS_ERR(tz)) {
++				data->zone[data->nzones++] = tz;
++
++				/*
++				 * Immediately, not after the loop: the zone is
++				 * already registered and reachable, and until a
++				 * link exists device_links_busy() is false for
++				 * the provider, so __device_release_driver()
++				 * skips device_links_unbind_consumers() and
++				 * frees the source zones under a reader holding
++				 * bare pointers to them.  Linking here bounds
++				 * that window to this zone's own registration
++				 * rather than leaving every zone exposed for
++				 * the rest of the probe.
++				 *
++				 * Unconditional: none of the four causes that
++				 * return -EPROBE_DEFER is helped by
++				 * driver_deferred_probe_check_state().  The
++				 * fifth cause, -EAGAIN, is the one that is,
++				 * and it is handled separately below.  A
++				 * provider that is unbinding comes back when it
++				 * rebinds, and driver_bound() retriggers the
++				 * whole deferred list then; if a link was
++				 * already added before that was noticed it
++				 * parks at DORMANT, and
++				 * device_links_check_suppliers() will not let
++				 * this driver probe again until the same thing
++				 * happens.  A provider in the middle of its own
++				 * ->probe finishes either way, and retriggers
++				 * the list the same way if it binds.  A source
++				 * that went away is resolved by the next
++				 * attempt's own lookup.  A link that could not
++				 * be allocated is an OOM that passes.  The
++				 * first three settle by themselves; the fourth
++				 * needs the exemption most of all, because
++				 * post-boot that helper answers terminally on
++				 * the first ask, so consulting it would produce
++				 * exactly what deferring on a NULL link exists
++				 * to prevent - a registered zone holding
++				 * pointers no link is protecting.
++				 */
++				ret = virt_tz_link_sources(pdev, tz, zones,
++							   nzones, i);
++				if (ret == -EAGAIN) {
++					/*
++					 * A provider stuck at DL_DEV_PROBING.
++					 * Wait only while the driver core still
++					 * expects things to appear; past that it
++					 * is parked rather than working, and it
++					 * has registered nothing, so carry on
++					 * without its link rather than lose every
++					 * zone waiting on it.
++					 */
++					if (!defer_state)
++						defer_state = driver_deferred_probe_check_state(&pdev->dev);
++
++					if (defer_state == -EPROBE_DEFER) {
++						ret = -EPROBE_DEFER;
++						goto rollback;
++					}
++
++					dev_warn(&pdev->dev,
++						 "%pOFn: a source provider is still not probed now that deferred probing has ended; keeping the zone with that source unlinked\n",
++						 zones[i].np);
++					ret = 0;
++				} else if (ret) {
++					goto rollback;
++				}
++
++				/*
++				 * Only now.  Enabling is what makes the core
++				 * poll the zone, and thermal_zone_device_enable()
++				 * itself does one synchronous ->get_temp() under
++				 * tz->lock - which dereferences the source
++				 * pointers.  Doing that inside virt_tz_register()
++				 * meant the first read of those pointers happened
++				 * before any provider had been examined at all,
++				 * so a provider already inside device_remove()
++				 * could have had devres free its zones between
++				 * this driver resolving them and that read.
++				 * Enabling here puts every provider check ahead
++				 * of the first dereference.
++				 *
++				 * The zone still registers disabled, and a
++				 * disabled zone is readable - thermal_zone_get_temp()
++				 * gates on device_is_registered(), not on mode - so
++				 * a deeper zone may use this one as a source before
++				 * this point without seeing a failure.
++				 */
++				ret = thermal_zone_device_enable(tz);
++				if (ret) {
++					/*
++					 * With no ->change_mode op the only
++					 * failure is -ENODEV, meaning the zone's
++					 * device was unregistered underneath us.
++					 * Treat it as the world having changed
++					 * and take the attempt again.
++					 */
++					dev_warn(&pdev->dev,
++						 "%pOFn: could not enable the zone (%d); discarding this attempt\n",
++						 zones[i].np, ret);
++					ret = -EPROBE_DEFER;
++					goto rollback;
++				}
++
++				continue;
++			}
++
++			if (PTR_ERR(tz) == -EPROBE_DEFER) {
++				/*
++				 * Ask the core whether waiting is still worth
++				 * anything: it answers -EPROBE_DEFER while the
++				 * deferred-probe window is open and -ETIMEDOUT
++				 * (or -ENODEV, with modules disabled) once
++				 * nothing further can bind.
++				 *
++				 * Counting our own attempts cannot express
++				 * that.  Every successful bind anywhere in the
++				 * system retriggers the whole pending list
++				 * (driver_bound() ->
++				 * driver_deferred_probe_trigger()), so an
++				 * unrelated device binding would burn a retry
++				 * that has nothing to do with our source, and a
++				 * fixed budget would settle early - losing
++				 * every zone that was only waiting for a
++				 * provider that had not bound yet.
++				 *
++				 * Asked once per probe: within one attempt the
++				 * answer only ever moves towards terminal, and
++				 * a -EPROBE_DEFER never returns here anyway, so
++				 * caching it spares the board one copy of the
++				 * core's own warning per waiting zone.
++				 */
++				if (!defer_state)
++					defer_state = driver_deferred_probe_check_state(&pdev->dev);
++
++				if (defer_state == -EPROBE_DEFER) {
++					ret = -EPROBE_DEFER;
++					goto rollback;
++				}
++
++				/*
++				 * The window has closed: treat the missing
++				 * source as one that will never arrive, so the
++				 * zones that do work are not held hostage by it.
++				 */
++				dev_warn(&pdev->dev,
++					 "%pOFn: a source is still not registered now that deferred probing has ended, skipping\n",
++					 zones[i].np);
++			}
++
++			zones[i].rejected = true;
++			skipped++;
++		}
++	}
++
++	/*
++	 * The set has settled - an attempt that defers never reaches here - so
++	 * report once whether our sensorless nodes cost any sensor its zone.
++	 */
++	virt_tz_warn_dt_ordering(&pdev->dev);
++
++	if (!data->nzones) {
++		dev_info(&pdev->dev,
++			 "No virtual thermal zones could be registered (%d skipped)\n",
++			 skipped);
++		kfree(data);
++		ret = -ENODEV;
++		goto out_put;
+ 	}
+ 
+-	/* If we have at least some zones registered (from this or previous probes), consider it success */
+-	/* (No message needed for zones already registered from previous probes) */
++	platform_set_drvdata(pdev, data);
+ 
+-	/* Print summary and details of all registered zones */
+-	dev_info(&pdev->dev, "Registered %d virtual thermal zone%s (%d skipped due to missing dependencies)\n",
+-		 global_registered_count, (global_registered_count != 1) ? "s" : "", skipped);
++	dev_info(&pdev->dev, "Registered %d virtual thermal zone%s (%d skipped)\n",
++		 data->nzones, (data->nzones != 1) ? "s" : "", skipped);
+ 
+-	/* Print details of each registered zone */
+-	for (i = 0; i < global_registered_count; i++) {
+-		struct thermal_zone_device *rtz = global_registered_zones[i];
+-		struct virt_tz *virt;
+-		int ntrips;
++	for (i = 0; i < data->nzones; i++) {
++		struct thermal_zone_device *rtz = data->zone[i];
++		struct virt_tz *virt = rtz->devdata;
+ 
+-		if (!rtz)
++		if (!virt)
+ 			continue;
+ 
+-		virt = rtz->devdata;
+-		ntrips = rtz->num_trips;
+-
+-		if (virt) {
+-			dev_info(&pdev->dev, "  '%s': %d sources, %d trips, calculate '%s', governor '%s'\n",
+-				 rtz->type,
+-				 virt->num_sensors,
+-				 ntrips,
+-				 logic_names[virt->logic],
+-				 rtz->governor->name);
+-		}
++		dev_info(&pdev->dev,
++			 "  '%s': %d sources, %d trips, calculate '%s', governor '%s', depth %d\n",
++			 rtz->type, virt->num_sensors, rtz->num_trips,
++			 logic_names[virt->logic],
++			 /* "none" is unreachable: a NULL governor is rejected */
++			 rtz->governor ? rtz->governor->name : "none",
++			 virt->depth);
+ 	}
+ 
+-	/* Successful probe with registered zones - check if we should clean up defer tracking */
+-	if (!has_deferred_zones()) {
+-		/* No zones are pending defer, clean up global defer tracking */
+-		dev_info(&pdev->dev, "All zones resolved, cleaning up defer tracking\n");
+-		cleanup_global_defer_list();
+-	}
++	goto out_put;
++
++rollback:
++	/*
++	 * Undo the whole attempt instead of leaving a partial set registered:
++	 * the next one starts from a clean slate and needs no memory of this
++	 * one.  Reverse order, so a consumer goes before the source it reads.
++	 */
++	for (i = data->nzones - 1; i >= 0; i--)
++		virt_tz_unregister(data->zone[i]);
++	kfree(data);
++
++out_put:
++	for (i = 0; i < nzones; i++)
++		of_node_put(zones[i].np);
++	kfree(zones);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static int virt_tz_remove(struct platform_device *pdev)
+ {
++	struct virt_tz_data *data = platform_get_drvdata(pdev);
+ 	int i;
+ 
+-	/* Unregister all thermal zones from global array */
+-	for (i = 0; i < global_registered_count; i++) {
+-		if (global_registered_zones[i]) {
+-			virt_tz_unregister(global_registered_zones[i]);
+-			global_registered_zones[i] = NULL;
+-		}
+-	}
+-	global_registered_count = 0;
++	if (!data)
++		return 0;
+ 
+-	/* Clean up global defer list */
+-	cleanup_global_defer_list();
++	/*
++	 * Zones were registered in order of increasing depth, so walk the array
++	 * backwards: a virtual zone that uses another one as a source is torn
++	 * down before the source it reads.
++	 */
++	for (i = data->nzones - 1; i >= 0; i--)
++		virt_tz_unregister(data->zone[i]);
++
++	kfree(data);
+ 
+ 	return 0;
+ }

@@ -1,15 +1,17 @@
-From d5362282f5d6136aee3c6265fbe40936c433e0ff Mon Sep 17 00:00:00 2001
-From: =?utf-8?q?Giedr=C4=97=20=C5=A0imk=C5=ABnait=C4=97?=
+From 9fd590b761cdc6ea87cffdadbc6023ee79bf1e19 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Giedr=C4=97=20=C5=A0imk=C5=ABnait=C4=97?=
  <giedre.s@8devices.com>
-Date: Tue, 28 Oct 2025 12:30:21 +0000
-Subject: [PATCH] thermal: add generic virtual thermal zones driver to kernel
- config
+Date: Tue, 4 Nov 2025 11:50:31 +0000
+Subject: [PATCH] thermal: add generic virtual thermal zones driver config
 MIME-Version: 1.0
-Content-Type: text/plain; charset=utf-8
+Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-Upstream-Status: Pending
+ref.: 8devices/software/yocto/meta-8dev-qcs405#539
+
 Signed-off-by: Giedrė Šimkūnaitė <giedre.s@8devices.com>
+Upstream-Status: Pending
+
 ---
  drivers/thermal/Kconfig  | 32 ++++++++++++++++++++++++++++++++
  drivers/thermal/Makefile |  1 +
@@ -70,6 +72,3 @@ index c934cab309ae..4ef409c59a6b 100644
  obj-$(CONFIG_SPEAR_THERMAL)	+= spear_thermal.o
  obj-$(CONFIG_SUN8I_THERMAL)     += sun8i_thermal.o
  obj-$(CONFIG_ROCKCHIP_THERMAL)	+= rockchip_thermal.o
--- 
-2.25.1
-

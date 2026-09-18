@@ -1,3 +1,4 @@
+From 8aa3c2cd4800fe48d284398854ea632d9496e665 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Simonas=20Sku=C4=8Das?= <simonas.s@8devices.com>
 Date: Mon, 13 Oct 2025 06:16:30 +0000
 Subject: [PATCH] msm_serial: add additional 2 uart ports
@@ -8,13 +9,14 @@ Content-Transfer-Encoding: 8bit
 Add one port for BLSP5, and another for Bluetooth port (TOB_100)
 
 Signed-off-by: Simonas Skučas <simonas.s@8devices.com>
+Upstream-Status: Pending
+
 ---
  drivers/tty/serial/msm_serial.c | 18 ++++++++++++++++++
  1 file changed, 18 insertions(+)
 
 diff --git a/drivers/tty/serial/msm_serial.c b/drivers/tty/serial/msm_serial.c
-diff --git a/drivers/tty/serial/msm_serial.c b/drivers/tty/serial/msm_serial.c
-From b037ac62c561735030283c430c3ab33900b1cb77 Mon Sep 17 00:00:00 2001
+index 90953e679e38..e0c566ff655a 100644
 --- a/drivers/tty/serial/msm_serial.c
 +++ b/drivers/tty/serial/msm_serial.c
 @@ -1584,6 +1584,24 @@ static struct msm_port msm_uart_ports[] = {
@@ -42,6 +44,3 @@ From b037ac62c561735030283c430c3ab33900b1cb77 Mon Sep 17 00:00:00 2001
  };
  
  #define MSM_UART_NR	ARRAY_SIZE(msm_uart_ports)
--- 
-2.25.1
-

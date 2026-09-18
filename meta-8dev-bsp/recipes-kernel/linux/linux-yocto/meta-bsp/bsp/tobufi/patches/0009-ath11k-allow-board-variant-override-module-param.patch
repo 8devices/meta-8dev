@@ -1,7 +1,10 @@
-From 0d6cce35583b0a0be73f08a388662b58c27f92b7 Mon Sep 17 00:00:00 2001
+From 3f06c7740ef7c671052364c36cec96cc06faedb5 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Edvinas=20Stun=C5=BE=C4=97nas?= <edvinas@8devices.com>
 Date: Sat, 15 Feb 2025 20:10:47 +0000
 Subject: [PATCH] ath11k: allow board variant override module param
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 Radio band on TobyFi/Pine (QCN9074) radio is controlled using
 board data change and driver reinitialisation. Such board data
@@ -9,8 +12,8 @@ variant selection/enforcement via module params makes possible
 to encode multiple board datas for same radio and perform the
 switch without making changes in FS.
 
-Upstream-Status: Inappropriate [embedded specific]
 Signed-off-by: Edvinas Stunžėnas <edvinas@8devices.com>
+Upstream-Status: Inappropriate [embedded specific]
 ---
  drivers/net/wireless/ath/ath11k/core.c | 8 ++++++++
  1 file changed, 8 insertions(+)
@@ -41,6 +44,3 @@ index fc7c4564a715..f13fb3736b4c 100644
  	if (with_variant && ab->qmi.target.bdf_ext[0] != '\0')
  		scnprintf(variant, sizeof(variant), ",variant=%s",
  			  ab->qmi.target.bdf_ext);
--- 
-2.25.1
-

@@ -1,0 +1,27 @@
+From 411a9e119f1f14c78d3012894d618f423979028a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Edvinas=20Stun=C5=BE=C4=97nas?= <edvinas@8devices.com>
+Date: Fri, 24 Jan 2025 21:26:41 +0000
+Subject: [PATCH] power: reset: qcom-pon: fix gen2 shift for pms405-pon
+
+The PMS405 used with TobuFi modules has (and reports) gen2 pon.
+
+Signed-off-by: Edvinas Stunzenas <edvinas@8devices.com>
+Upstream-Status: Pending
+
+---
+ drivers/power/reset/qcom-pon.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/power/reset/qcom-pon.c b/drivers/power/reset/qcom-pon.c
+index 1344b361a475..af4e9ec43f01 100644
+--- a/drivers/power/reset/qcom-pon.c
++++ b/drivers/power/reset/qcom-pon.c
+@@ -88,7 +88,7 @@ static int pm8916_pon_probe(struct platform_device *pdev)
+ static const struct of_device_id pm8916_pon_id_table[] = {
+ 	{ .compatible = "qcom,pm8916-pon", .data = (void *)GEN1_REASON_SHIFT },
+ 	{ .compatible = "qcom,pm8941-pon", .data = (void *)NO_REASON_SHIFT },
+-	{ .compatible = "qcom,pms405-pon", .data = (void *)GEN1_REASON_SHIFT },
++	{ .compatible = "qcom,pms405-pon", .data = (void *)GEN2_REASON_SHIFT },
+ 	{ .compatible = "qcom,pm8998-pon", .data = (void *)GEN2_REASON_SHIFT },
+ 	{ .compatible = "qcom,pmk8350-pon", .data = (void *)GEN2_REASON_SHIFT },
+ 	{ }

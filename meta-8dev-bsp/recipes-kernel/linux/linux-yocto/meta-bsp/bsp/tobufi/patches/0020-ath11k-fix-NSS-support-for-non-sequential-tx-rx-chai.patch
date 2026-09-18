@@ -1,0 +1,93 @@
+From 8aabf41ae1d6b422c08c8f170e9b27cdc3cc0bda Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Giedrius=20Medzevi=C4=8Dius?= <giedrius@8devices.com>
+Date: Fri, 14 Mar 2025 18:50:44 +0200
+Subject: [PATCH] ath11k: fix NSS support for non-sequential tx/rx chainmasks
+
+MiniPini 2x2 comes with chainmask allocation of 0x5.
+Original logic would not properly configure HT/VHT/HE caps to enable
+multiple spatial stream datarates, causing significantly reduced
+throughtput on regular AP/STA link. Additionally, configuring any other
+single antenna chain (0x2, 0x4, 0x8) would disable HT/VHT/HE rates.
+Upstream-Status: Pending
+
+---
+ drivers/net/wireless/ath/ath11k/mac.c | 31 ++++++++++++++++++++-------
+ 1 file changed, 23 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath11k/mac.c b/drivers/net/wireless/ath/ath11k/mac.c
+index 4247c0f840a4..ff85999a4008 100644
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -5438,8 +5438,11 @@ ath11k_create_ht_cap(struct ath11k *ar, u32 ar_ht_cap, u32 rate_cap_rx_chainmask
+ 	if (ar_vht_cap & WMI_VHT_CAP_MAX_MPDU_LEN_MASK)
+ 		ht_cap.cap |= IEEE80211_HT_CAP_MAX_AMSDU;
+ 
+-	for (i = 0; i < ar->num_rx_chains; i++) {
+-		if (rate_cap_rx_chainmask & BIT(i))
++	if (ar->num_rx_chains) {
++		u8 max_nss = min(get_num_chains(rate_cap_rx_chainmask),
++				 ar->num_rx_chains);
++
++		for (i = 0; i < max_nss; i++)
+ 			ht_cap.mcs.rx_mask[i] = 0xFF;
+ 	}
+ 
+@@ -5560,6 +5563,7 @@ ath11k_create_vht_cap(struct ath11k *ar, u32 rate_cap_tx_chainmask,
+ {
+ 	struct ieee80211_sta_vht_cap vht_cap = {0};
+ 	u16 txmcs_map, rxmcs_map;
++	u8 max_tx_nss, max_rx_nss;
+ 	int i;
+ 
+ 	vht_cap.vht_supported = 1;
+@@ -5573,13 +5577,17 @@ ath11k_create_vht_cap(struct ath11k *ar, u32 rate_cap_tx_chainmask,
+ 
+ 	rxmcs_map = 0;
+ 	txmcs_map = 0;
++
++	max_tx_nss = min(get_num_chains(rate_cap_tx_chainmask), ar->num_tx_chains);
++	max_rx_nss = min(get_num_chains(rate_cap_rx_chainmask), ar->num_rx_chains);
++
+ 	for (i = 0; i < 8; i++) {
+-		if (i < ar->num_tx_chains && rate_cap_tx_chainmask & BIT(i))
++		if (i < max_tx_nss)
+ 			txmcs_map |= IEEE80211_VHT_MCS_SUPPORT_0_9 << (i * 2);
+ 		else
+ 			txmcs_map |= IEEE80211_VHT_MCS_NOT_SUPPORTED << (i * 2);
+ 
+-		if (i < ar->num_rx_chains && rate_cap_rx_chainmask & BIT(i))
++		if (i < max_rx_nss)
+ 			rxmcs_map |= IEEE80211_VHT_MCS_SUPPORT_0_9 << (i * 2);
+ 		else
+ 			rxmcs_map |= IEEE80211_VHT_MCS_NOT_SUPPORTED << (i * 2);
+@@ -5773,19 +5781,26 @@ static void ath11k_mac_set_hemcsmap(struct ath11k *ar,
+ 				    int band)
+ {
+ 	u16 txmcs_map, rxmcs_map;
++	u32 rate_cap_tx_chainmask, rate_cap_rx_chainmask;
++	u8 max_tx_nss, max_rx_nss;
+ 	u32 i;
+ 
+ 	rxmcs_map = 0;
+ 	txmcs_map = 0;
++
++	rate_cap_tx_chainmask = ar->cfg_tx_chainmask >> cap->tx_chain_mask_shift;
++	rate_cap_rx_chainmask = ar->cfg_rx_chainmask >> cap->rx_chain_mask_shift;
++
++	max_tx_nss = min(get_num_chains(rate_cap_tx_chainmask), ar->num_tx_chains);
++	max_rx_nss = min(get_num_chains(rate_cap_rx_chainmask), ar->num_rx_chains);
++
+ 	for (i = 0; i < 8; i++) {
+-		if (i < ar->num_tx_chains &&
+-		    (ar->cfg_tx_chainmask >> cap->tx_chain_mask_shift) & BIT(i))
++		if (i < max_tx_nss)
+ 			txmcs_map |= IEEE80211_HE_MCS_SUPPORT_0_11 << (i * 2);
+ 		else
+ 			txmcs_map |= IEEE80211_HE_MCS_NOT_SUPPORTED << (i * 2);
+ 
+-		if (i < ar->num_rx_chains &&
+-		    (ar->cfg_rx_chainmask >> cap->tx_chain_mask_shift) & BIT(i))
++		if (i < max_rx_nss)
+ 			rxmcs_map |= IEEE80211_HE_MCS_SUPPORT_0_11 << (i * 2);
+ 		else
+ 			rxmcs_map |= IEEE80211_HE_MCS_NOT_SUPPORTED << (i * 2);

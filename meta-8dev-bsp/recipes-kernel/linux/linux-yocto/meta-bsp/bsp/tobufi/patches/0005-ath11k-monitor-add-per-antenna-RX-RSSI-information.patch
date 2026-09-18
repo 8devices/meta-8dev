@@ -1,0 +1,79 @@
+From a59327fac4eade0435886a4e187857b3afc1513a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Giedrius=20Medzevi=C4=8Dius?= <giedrius@8devices.com>
+Date: Fri, 20 Sep 2024 01:36:38 +0300
+Subject: [PATCH] ath11k: monitor: add per-antenna RX RSSI information
+
+This change provides RX RSSI information for each antenna separately.
+
+* Removed blocking condition for parsing HAL per-chain RSSI information
+* Fill in the per-chain RSSI information into the ieee80211_rx_status
+* Adjust reported signal units based on dB/dBm radio configuration
+Upstream-Status: Pending
+
+---
+ drivers/net/wireless/ath/ath11k/dp_rx.c  | 19 ++++++++++++++++++-
+ drivers/net/wireless/ath/ath11k/hal_rx.c | 12 ++++--------
+ 2 files changed, 22 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath11k/dp_rx.c b/drivers/net/wireless/ath/ath11k/dp_rx.c
+index d6f462b0cefd..9a04dc66c5aa 100644
+--- a/drivers/net/wireless/ath/ath11k/dp_rx.c
++++ b/drivers/net/wireless/ath/ath11k/dp_rx.c
+@@ -4987,9 +4987,26 @@ static void ath11k_update_radiotap(struct ath11k *ar,
+ {
+ 	struct ieee80211_supported_band *sband;
+ 	u8 *ptr = NULL;
++	bool db2dbm = test_bit(WMI_TLV_SERVICE_HW_DB2DBM_CONVERSION_SUPPORT,
++			       ar->ab->wmi_ab.svc_map);
++	int chain, pos;
+ 
+ 	rxs->flag |= RX_FLAG_MACTIME_START;
+-	rxs->signal = ppduinfo->rssi_comb + ATH11K_DEFAULT_NOISE_FLOOR;
++	rxs->signal = ppduinfo->rssi_comb;
++	if (!db2dbm)
++		rxs->signal += ATH11K_DEFAULT_NOISE_FLOOR;
++
++	/* Firmware fills per-chain RSSI information sequentially for
++	 * each enabled chain and not based on an actual chain index
++	 */
++	rxs->chains = ar->cfg_rx_chainmask;
++	for (chain = 0, pos = 0; chain < IEEE80211_MAX_CHAINS; chain++) {
++		if (rxs->chains & (1 << chain)) {
++			rxs->chain_signal[chain] =  ppduinfo->rssi_chain_pri20[pos++];
++			if (!db2dbm)
++				rxs->chain_signal[chain] += ATH11K_DEFAULT_NOISE_FLOOR;
++		}
++	}
+ 
+ 	if (ppduinfo->nss)
+ 		rxs->nss = ppduinfo->nss;
+diff --git a/drivers/net/wireless/ath/ath11k/hal_rx.c b/drivers/net/wireless/ath/ath11k/hal_rx.c
+index 363adac84a87..3336659ee280 100644
+--- a/drivers/net/wireless/ath/ath11k/hal_rx.c
++++ b/drivers/net/wireless/ath/ath11k/hal_rx.c
+@@ -1443,8 +1443,6 @@ ath11k_hal_rx_parse_mon_status_tlv(struct ath11k_base *ab,
+ 	}
+ 	case HAL_PHYRX_RSSI_LEGACY: {
+ 		int i;
+-		bool db2dbm = test_bit(WMI_TLV_SERVICE_HW_DB2DBM_CONVERSION_SUPPORT,
+-				       ab->wmi_ab.svc_map);
+ 		struct hal_rx_phyrx_rssi_legacy_info *rssi =
+ 			(struct hal_rx_phyrx_rssi_legacy_info *)tlv_data;
+ 
+@@ -1456,12 +1454,10 @@ ath11k_hal_rx_parse_mon_status_tlv(struct ath11k_base *ab,
+ 			FIELD_GET(HAL_RX_PHYRX_RSSI_LEGACY_INFO_INFO0_RSSI_COMB,
+ 				  __le32_to_cpu(rssi->info0));
+ 
+-		if (db2dbm) {
+-			for (i = 0; i < ARRAY_SIZE(rssi->preamble); i++) {
+-				ppdu_info->rssi_chain_pri20[i] =
+-					le32_get_bits(rssi->preamble[i].rssi_2040,
+-						      HAL_RX_PHYRX_RSSI_PREAMBLE_PRI20);
+-			}
++		for (i = 0; i < ARRAY_SIZE(rssi->preamble); i++) {
++			ppdu_info->rssi_chain_pri20[i] =
++				le32_get_bits(rssi->preamble[i].rssi_2040,
++					      HAL_RX_PHYRX_RSSI_PREAMBLE_PRI20);
+ 		}
+ 		break;
+ 	}

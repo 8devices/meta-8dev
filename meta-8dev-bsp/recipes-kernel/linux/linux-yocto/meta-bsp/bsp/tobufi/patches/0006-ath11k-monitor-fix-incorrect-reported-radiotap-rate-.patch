@@ -1,0 +1,64 @@
+From 77c3a03a5706407fb53df38cc8316c3922489645 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Giedrius=20Medzevi=C4=8Dius?= <giedrius@8devices.com>
+Date: Fri, 20 Sep 2024 01:36:44 +0300
+Subject: [PATCH] ath11k: monitor: fix incorrect reported radiotap rate/MCS
+
+This chage fixes two separate bug:
+* Legacy rates: HAL rate field has bit(4) set for OFDM rates
+* HT/VHT/HE rates used incorrect HAL descriptor field (rate vs mcs)
+Upstream-Status: Pending
+
+---
+ drivers/net/wireless/ath/ath11k/dp_rx.c  |  6 +++---
+ drivers/net/wireless/ath/ath11k/hal_rx.c | 10 ++++++++++
+ 2 files changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath11k/dp_rx.c b/drivers/net/wireless/ath/ath11k/dp_rx.c
+index 9a04dc66c5aa..b4daf1739872 100644
+--- a/drivers/net/wireless/ath/ath11k/dp_rx.c
++++ b/drivers/net/wireless/ath/ath11k/dp_rx.c
+@@ -5021,13 +5021,13 @@ static void ath11k_update_radiotap(struct ath11k *ar,
+ 		rxs->encoding = RX_ENC_HE;
+ 		ptr = skb_push(mon_skb, sizeof(struct ieee80211_radiotap_he));
+ 		ath11k_dp_rx_update_radiotap_he(ppduinfo, ptr);
+-		rxs->rate_idx = ppduinfo->rate;
++		rxs->rate_idx = ppduinfo->mcs;
+ 	} else if (ppduinfo->vht_flags) {
+ 		rxs->encoding = RX_ENC_VHT;
+-		rxs->rate_idx = ppduinfo->rate;
++		rxs->rate_idx = ppduinfo->mcs;
+ 	} else if (ppduinfo->ht_flags) {
+ 		rxs->encoding = RX_ENC_HT;
+-		rxs->rate_idx = ppduinfo->rate;
++		rxs->rate_idx = ppduinfo->mcs;
+ 	} else {
+ 		rxs->encoding = RX_ENC_LEGACY;
+ 		sband = &ar->mac.sbands[rxs->band];
+diff --git a/drivers/net/wireless/ath/ath11k/hal_rx.c b/drivers/net/wireless/ath/ath11k/hal_rx.c
+index 3336659ee280..5552b35ee399 100644
+--- a/drivers/net/wireless/ath/ath11k/hal_rx.c
++++ b/drivers/net/wireless/ath/ath11k/hal_rx.c
+@@ -1007,6 +1007,11 @@ ath11k_hal_rx_parse_mon_status_tlv(struct ath11k_base *ab,
+ 
+ 		ppdu_info->rate = FIELD_GET(HAL_RX_LSIG_B_INFO_INFO0_RATE,
+ 					    __le32_to_cpu(lsigb->info0));
++
++		// L-SIG rate field bit 4 indicates OFDM vs CCK rate
++		ppdu_info->cck_flag = (ppdu_info->rate & 0x8) == 0;
++		ppdu_info->rate &= 0x7;
++
+ 		ppdu_info->reception_type = HAL_RX_RECEPTION_TYPE_SU;
+ 		break;
+ 	}
+@@ -1016,6 +1021,11 @@ ath11k_hal_rx_parse_mon_status_tlv(struct ath11k_base *ab,
+ 
+ 		ppdu_info->rate = FIELD_GET(HAL_RX_LSIG_A_INFO_INFO0_RATE,
+ 					    __le32_to_cpu(lsiga->info0));
++
++		// L-SIG rate field bit 4 indicates OFDM vs CCK rate
++		ppdu_info->cck_flag = (ppdu_info->rate & 0x8) == 0;
++		ppdu_info->rate &= 0x7;
++
+ 		ppdu_info->reception_type = HAL_RX_RECEPTION_TYPE_SU;
+ 		break;
+ 	}

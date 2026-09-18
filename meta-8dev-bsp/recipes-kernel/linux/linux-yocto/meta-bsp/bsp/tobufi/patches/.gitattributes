@@ -1,0 +1,4 @@
+# Patches are byte streams, not text. One of these adds a source file with CRLF
+# line endings, and normalising them here would make the patch stop reproducing
+# the commit it was exported from.
+*.patch -text

@@ -1,0 +1,1732 @@
+From fb54a4993fe9ae1f752e3ac10cbdfe2585560611 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Giedr=C4=97=20=C5=A0imk=C5=ABnait=C4=97?=
+ <giedre.s@8devices.com>
+Date: Mon, 17 Nov 2025 07:36:20 +0000
+Subject: [PATCH] ath10k: add self-managed mode implementation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+All changes are based on ath11k driver. Mainly on these files:
+ * * drivers/net/wireless/ath/ath11k/core.h
+ * * drivers/net/wireless/ath/ath11k/core.c
+ * * drivers/net/wireless/ath/ath11k/mac.h
+ * * drivers/net/wireless/ath/ath11k/mac.c
+ * * drivers/net/wireless/ath/ath11k/reg.h
+ * * drivers/net/wireless/ath/ath11k/reg.c
+ * * drivers/net/wireless/ath/ath11k/wmi.h
+ * * drivers/net/wireless/ath/ath11k/wmi.c
+ * Copyright (c) 2018-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+
+Upstream-Status: Pending
+Signed-off-by: Giedrė Šimkūnaitė <giedre.s@8devices.com>
+---
+ drivers/net/wireless/ath/ath10k/Kconfig   |  15 +
+ drivers/net/wireless/ath/ath10k/Makefile  |   3 +-
+ drivers/net/wireless/ath/ath10k/core.c    |  10 +-
+ drivers/net/wireless/ath/ath10k/core.h    |  22 +
+ drivers/net/wireless/ath/ath10k/mac.c     |  73 ++-
+ drivers/net/wireless/ath/ath10k/mac.h     |   1 +
+ drivers/net/wireless/ath/ath10k/reg.c     | 632 ++++++++++++++++++++++
+ drivers/net/wireless/ath/ath10k/reg.h     |  66 +++
+ drivers/net/wireless/ath/ath10k/wmi-ops.h |  38 ++
+ drivers/net/wireless/ath/ath10k/wmi-tlv.c | 205 +++++++
+ drivers/net/wireless/ath/ath10k/wmi-tlv.h |  42 ++
+ drivers/net/wireless/ath/ath10k/wmi.c     | 127 +++++
+ drivers/net/wireless/ath/ath10k/wmi.h     |  78 +++
+ 13 files changed, 1304 insertions(+), 8 deletions(-)
+ create mode 100644 drivers/net/wireless/ath/ath10k/reg.c
+ create mode 100644 drivers/net/wireless/ath/ath10k/reg.h
+
+diff --git a/drivers/net/wireless/ath/ath10k/Kconfig b/drivers/net/wireless/ath/ath10k/Kconfig
+index 4f385f4a8cef..87aa6f6a11c1 100644
+--- a/drivers/net/wireless/ath/ath10k/Kconfig
++++ b/drivers/net/wireless/ath/ath10k/Kconfig
+@@ -52,6 +52,21 @@ config ATH10K_SNOC
+ 	  This module adds support for integrated WCN3990 chip connected
+ 	  to system NOC(SNOC).
+ 
++config ATH10K_REG_OFFLOAD
++	bool "Enable ath10k self-managed mode"
++	depends on ATH10K
++	help
++	  This feature sets ath10k driver to self-managed mode. In self-managed mode ath10k
++	  driver reads regulatory data from device firmware. 
++
++	  If this feature enabled - firmware controls ath10k driver regulatory data settings. 
++	  
++	  If this feature is disabled - kernel controls ath10k driver regulatory data.
++
++	  DISCLAIMER: make sure your device firmware supports regulatory data reading event.
++
++	  If unsure say N.
++
+ config ATH10K_DEBUG
+ 	bool "Atheros ath10k debugging"
+ 	depends on ATH10K
+diff --git a/drivers/net/wireless/ath/ath10k/Makefile b/drivers/net/wireless/ath/ath10k/Makefile
+index 142c777b287f..acd4530bd1a2 100644
+--- a/drivers/net/wireless/ath/ath10k/Makefile
++++ b/drivers/net/wireless/ath/ath10k/Makefile
+@@ -13,7 +13,8 @@ ath10k_core-y += mac.o \
+ 		 bmi.o \
+ 		 hw.o \
+ 		 p2p.o \
+-		 swap.o
++		 swap.o \
++		 reg.o
+ 
+ ath10k_core-$(CONFIG_ATH10K_SPECTRAL) += spectral.o
+ ath10k_core-$(CONFIG_NL80211_TESTMODE) += testmode.o
+diff --git a/drivers/net/wireless/ath/ath10k/core.c b/drivers/net/wireless/ath/ath10k/core.c
+index c3a8b3496be2..b82c9b647dde 100644
+--- a/drivers/net/wireless/ath/ath10k/core.c
++++ b/drivers/net/wireless/ath/ath10k/core.c
+@@ -3268,7 +3268,10 @@ void ath10k_core_stop(struct ath10k *ar)
+ {
+ 	lockdep_assert_held(&ar->conf_mutex);
+ 	ath10k_debug_stop(ar);
+-
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	cancel_work_sync(&ar->regd_update_work);
++	cancel_work_sync(&ar->reg_fallback_work);
++#endif
+ 	/* try to suspend target */
+ 	if (ar->state != ATH10K_STATE_RESTARTING &&
+ 	    ar->state != ATH10K_STATE_UTF)
+@@ -3659,7 +3662,10 @@ struct ath10k *ath10k_core_create(size_t priv_size, struct device *dev,
+ 	INIT_WORK(&ar->restart_work, ath10k_core_restart);
+ 	INIT_WORK(&ar->set_coverage_class_work,
+ 		  ath10k_core_set_coverage_class_work);
+-
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	INIT_WORK(&ar->regd_update_work, ath10k_reg_update_work);
++	INIT_WORK(&ar->reg_fallback_work, ath10k_reg_fallback_work);
++#endif
+ 	init_dummy_netdev(&ar->napi_dev);
+ 
+ 	ret = ath10k_coredump_create(ar);
+diff --git a/drivers/net/wireless/ath/ath10k/core.h b/drivers/net/wireless/ath/ath10k/core.h
+index 4b11a88fbd36..eae0a3e69574 100644
+--- a/drivers/net/wireless/ath/ath10k/core.h
++++ b/drivers/net/wireless/ath/ath10k/core.h
+@@ -28,6 +28,11 @@
+ #include "thermal.h"
+ #include "wow.h"
+ #include "swap.h"
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++#include "reg.h"
++
++#define ATH10K_SCAN_TIMEOUT_HZ (20 * HZ)
++#endif
+ 
+ #define MS(_v, _f) (((_v) & _f##_MASK) >> _f##_LSB)
+ #define SM(_v, _f) (((_v) << _f##_LSB) & _f##_MASK)
+@@ -1304,7 +1309,24 @@ struct ath10k {
+ 
+ 	s32 tx_power_2g_limit;
+ 	s32 tx_power_5g_limit;
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	/* Self-managed regulatory fields (similar to ath11k) */
++	u8 alpha2[REG_ALPHA2_LEN + 1];		  /* Current country code */
++	u8 prev_alpha2[REG_ALPHA2_LEN + 1];	  /* Previous country code for fallback */
++	bool regdom_set_by_user;  /* Track if user explicitly set country */
+ 
++	/* Regulatory update from firmware */
++	struct work_struct regd_update_work;
++	struct work_struct reg_fallback_work;
++
++	/* Below regd's are protected by data_lock */
++	/* This is the regd set by the firmware during initialization */
++	struct ieee80211_regdomain *default_regd;
++	/* This regd is set during dynamic country setting
++	 * This may or may not be used during the runtime
++	 */
++	struct ieee80211_regdomain *new_regd;
++#endif
+ 	/* must be last */
+ 	u8 drv_priv[] __aligned(sizeof(void *));
+ };
+diff --git a/drivers/net/wireless/ath/ath10k/mac.c b/drivers/net/wireless/ath/ath10k/mac.c
+index ee67e5a5562b..fc5b108f09bb 100644
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -3363,7 +3363,7 @@ static int ath10k_station_disassoc(struct ath10k *ar,
+ /* Regulatory */
+ /**************/
+ 
+-static int ath10k_update_channel_list(struct ath10k *ar)
++int ath10k_update_channel_list(struct ath10k *ar, bool wait)
+ {
+ 	struct ieee80211_hw *hw = ar->hw;
+ 	struct ieee80211_supported_band **bands;
+@@ -3375,8 +3375,21 @@ static int ath10k_update_channel_list(struct ath10k *ar)
+ 	int len;
+ 	int ret;
+ 	int i;
++	int left;
+ 
++#ifndef CONFIG_ATH10K_REG_OFFLOAD
+ 	lockdep_assert_held(&ar->conf_mutex);
++#else
++	if (wait && (ar->scan.state == ATH10K_SCAN_STARTING || ar->scan.state == ATH10K_SCAN_RUNNING)) {
++		left = wait_for_completion_timeout(&ar->scan.completed, ATH10K_SCAN_TIMEOUT_HZ);
++		if (!left)
++			ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "failed to receive hw scan complete: timed out\n");
++
++		ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "hw scan wait left time %d\n", left);
++	}
++#endif
++	if (ar->state == ATH10K_STATE_RESTARTING)
++		return 0;
+ 
+ 	bands = hw->wiphy->bands;
+ 	for (band = 0; band < NUM_NL80211_BANDS; band++) {
+@@ -3392,6 +3405,9 @@ static int ath10k_update_channel_list(struct ath10k *ar)
+ 		}
+ 	}
+ 
++	if (WARN_ON(!arg.n_channels))
++		return -EINVAL;
++
+ 	len = sizeof(struct wmi_channel_arg) * arg.n_channels;
+ 	arg.channels = kzalloc(len, GFP_KERNEL);
+ 	if (!arg.channels)
+@@ -3468,6 +3484,7 @@ static int ath10k_update_channel_list(struct ath10k *ar)
+ 	return ret;
+ }
+ 
++#ifndef CONFIG_ATH10K_REG_OFFLOAD
+ static enum wmi_dfs_region
+ ath10k_mac_get_dfs_region(enum nl80211_dfs_regions dfs_region)
+ {
+@@ -3493,7 +3510,7 @@ static void ath10k_regd_update(struct ath10k *ar)
+ 
+ 	lockdep_assert_held(&ar->conf_mutex);
+ 
+-	ret = ath10k_update_channel_list(ar);
++	ret = ath10k_update_channel_list(ar, false);
+ 	if (ret)
+ 		ath10k_warn(ar, "failed to update channel list: %d\n", ret);
+ 
+@@ -3563,6 +3580,7 @@ static void ath10k_reg_notifier(struct wiphy *wiphy,
+ 		ath10k_mac_update_channel_list(ar,
+ 					       ar->hw->wiphy->bands[NL80211_BAND_5GHZ]);
+ }
++#endif
+ 
+ static void ath10k_stop_radar_confirmation(struct ath10k *ar)
+ {
+@@ -4779,6 +4797,10 @@ void ath10k_halt(struct ath10k *ar)
+ 
+ 	lockdep_assert_held(&ar->conf_mutex);
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	cancel_work_sync(&ar->regd_update_work);
++	cancel_work_sync(&ar->reg_fallback_work);
++#endif
+ 	clear_bit(ATH10K_CAC_RUNNING, &ar->dev_flags);
+ 	ar->filter_flags = 0;
+ 	ar->monitor = false;
+@@ -5342,8 +5364,9 @@ static int ath10k_start(struct ieee80211_hw *hw)
+ 	}
+ 
+ 	ar->num_started_vdevs = 0;
++#ifndef CONFIG_ATH10K_REG_OFFLOAD
+ 	ath10k_regd_update(ar);
+-
++#endif
+ 	ath10k_spectral_start(ar);
+ 	ath10k_thermal_set_throttling(ar);
+ 
+@@ -5399,6 +5422,10 @@ static void ath10k_stop(struct ieee80211_hw *hw)
+ 	cancel_work_sync(&ar->set_coverage_class_work);
+ 	cancel_delayed_work_sync(&ar->scan.timeout);
+ 	cancel_work_sync(&ar->restart_work);
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	cancel_work_sync(&ar->regd_update_work);
++	cancel_work_sync(&ar->reg_fallback_work);
++#endif
+ }
+ 
+ static int ath10k_config_ps(struct ath10k *ar)
+@@ -8125,6 +8152,14 @@ static void ath10k_reconfig_complete(struct ieee80211_hw *hw,
+ 		ar->state = ATH10K_STATE_ON;
+ 		ieee80211_wake_queues(ar->hw);
+ 		clear_bit(ATH10K_FLAG_RESTARTING, &ar->dev_flags);
++	#ifdef CONFIG_ATH10K_REG_OFFLOAD
++		if (ar->alpha2[0] != 0 && ar->alpha2[1] != 0) {
++			struct cur_set_current_country_params set_current_param = {};
++
++			memcpy(&set_current_param.alpha2, ar->alpha2, 3);
++			ath10k_wmi_set_current_country_cmd(ar, &set_current_param);
++		}
++	#endif
+ 		if (ar->hw_params.hw_restart_disconnect) {
+ 			list_for_each_entry(arvif, &ar->arvifs, list) {
+ 				if (arvif->is_up && arvif->vdev_type == WMI_VDEV_TYPE_STA)
+@@ -10246,13 +10281,16 @@ int ath10k_mac_register(struct ath10k *ar)
+ 	/* Disable set_coverage_class for chipsets that do not support it. */
+ 	if (!ar->hw_params.hw_ops->set_coverage_class)
+ 		ar->ops->set_coverage_class = NULL;
+-
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	ath10k_reg_init(ar);
++#else
+ 	ret = ath_regd_init(&ar->ath_common.regulatory, ar->hw->wiphy,
+ 			    ath10k_reg_notifier);
+ 	if (ret) {
+ 		ath10k_err(ar, "failed to initialise regulatory: %i\n", ret);
+ 		goto err_dfs_detector_exit;
+ 	}
++#endif
+ 
+ 	if (test_bit(WMI_SERVICE_SPOOF_MAC_SUPPORT, ar->wmi.svc_map)) {
+ 		ar->hw->wiphy->features |=
+@@ -10288,6 +10326,21 @@ int ath10k_mac_register(struct ath10k *ar)
+ 		ar->hw->wiphy->software_iftypes |= BIT(NL80211_IFTYPE_AP_VLAN);
+ 	}
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	/* Apply the regd received during initialization */
++	ret = ath10k_reg_update(ar);
++	if (ret) {
++		ath10k_err(ar, "ath10k regd update failed: %d\n", ret);
++		goto err_unregister;
++	}
++
++	if (ar->alpha2[0] != 0 && ar->alpha2[1] != 0) {
++		struct cur_set_current_country_params set_current_param = {};
++
++		memcpy(&set_current_param.alpha2, ar->alpha2, 3);
++		ath10k_wmi_set_current_country_cmd(ar, &set_current_param);
++	}
++#else
+ 	if (!ath_is_world_regd(&ar->ath_common.reg_world_copy) &&
+ 	    !ath_is_world_regd(&ar->ath_common.regulatory)) {
+ 		ret = regulatory_hint(ar->hw->wiphy,
+@@ -10295,7 +10348,7 @@ int ath10k_mac_register(struct ath10k *ar)
+ 		if (ret)
+ 			goto err_unregister;
+ 	}
+-
++#endif
+ 	return 0;
+ 
+ err_unregister:
+@@ -10315,6 +10368,16 @@ int ath10k_mac_register(struct ath10k *ar)
+ 
+ void ath10k_mac_unregister(struct ath10k *ar)
+ {
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	cancel_work_sync(&ar->regd_update_work);
++	cancel_work_sync(&ar->reg_fallback_work);
++
++	/* Free regulatory domains */
++	kfree(ar->default_regd);
++	kfree(ar->new_regd);
++	ar->default_regd = NULL;
++	ar->new_regd = NULL;
++#endif
+ 	ieee80211_unregister_hw(ar->hw);
+ 
+ 	if (IS_ENABLED(CONFIG_ATH10K_DFS_CERTIFIED) && ar->dfs_detector)
+diff --git a/drivers/net/wireless/ath/ath10k/mac.h b/drivers/net/wireless/ath/ath10k/mac.h
+index 98d83a26ea60..788e66b669a2 100644
+--- a/drivers/net/wireless/ath/ath10k/mac.h
++++ b/drivers/net/wireless/ath/ath10k/mac.h
+@@ -50,6 +50,7 @@ int ath10k_mac_vif_chan(struct ieee80211_vif *vif,
+ 
+ void ath10k_mac_handle_beacon(struct ath10k *ar, struct sk_buff *skb);
+ void ath10k_mac_handle_beacon_miss(struct ath10k *ar, u32 vdev_id);
++int ath10k_update_channel_list(struct ath10k *ar, bool wait);
+ void ath10k_mac_handle_tx_pause_vdev(struct ath10k *ar, u32 vdev_id,
+ 				     enum wmi_tlv_tx_pause_id pause_id,
+ 				     enum wmi_tlv_tx_pause_action action);
+diff --git a/drivers/net/wireless/ath/ath10k/reg.c b/drivers/net/wireless/ath/ath10k/reg.c
+new file mode 100644
+index 000000000000..642ab0dfb26d
+--- /dev/null
++++ b/drivers/net/wireless/ath/ath10k/reg.c
+@@ -0,0 +1,632 @@
++// SPDX-License-Identifier: BSD-3-Clause-Clear
++/* Based on ath11k:
++ * * ath11k/reg.h:
++ * Copyright (c) 2019 The Linux Foundation. All rights reserved.
++ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
++ * * ath11k/reg.c:
++ * Copyright (c) 2018-2019 The Linux Foundation. All rights reserved.
++ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
++ * Author: Giedrė Šimkūnaitė <giedre.s@8devices.com>
++ */
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++#include <linux/rtnetlink.h>
++
++#include "core.h"
++#include "debug.h"
++#include "wmi-ops.h"
++#include "mac.h"
++
++#define ETSI_WEATHER_RADAR_BAND_LOW		5590
++#define ETSI_WEATHER_RADAR_BAND_HIGH		5650
++#define ETSI_WEATHER_RADAR_BAND_CAC_TIMEOUT	600000
++
++/**
++ * ath10k_regdom_changes() - Check if regulatory domain is changing
++ * @ar: ath10k device
++ * @alpha2: Two-character country code
++ *
++ * Return: true if regulatory domain is changing, false otherwise
++ */
++static bool ath10k_regdom_changes(struct ath10k *ar, char *alpha2)
++{
++	const struct ieee80211_regdomain *regd;
++
++	regd = rcu_dereference_rtnl(ar->hw->wiphy->regd);
++	/* This can happen during wiphy registration where the previous
++	 * user request is received before we update the regd received
++	 * from firmware.
++	 */
++	if (!regd)
++		return true;
++
++	return memcmp(regd->alpha2, alpha2, 2) != 0;
++}
++
++static void ath10k_reg_notifier_sf(struct wiphy *wiphy, struct regulatory_request *request)
++{
++	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
++	struct ath10k *ar = hw->priv;
++	struct cur_set_current_country_params set_current_param = {};
++	int ret;
++
++	ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "Regulatory Notification received for %s\n", wiphy_name(wiphy));
++
++	/* Currently supporting only General User Hints. Cell base user
++	 * hints to be handled later.
++	 * Hints from other sources like Core, Beacons are not expected for
++	 * self managed wiphy's
++	 */
++
++	/* Don't send commands during boot/initialization.*/
++	if (ar->state != ATH10K_STATE_ON) {
++		ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "Device not ready (state=%d), skipping country update\n", ar->state);
++		return;
++	}
++
++	if (!(request->initiator == NL80211_REGDOM_SET_BY_USER && request->user_reg_hint_type == NL80211_USER_REG_HINT_USER)) {
++		ath10k_warn(ar, "Unexpected Regulatory event for this wiphy\n");
++		return;
++	}
++
++	if (!IS_ENABLED(CONFIG_ATH_REG_DYNAMIC_USER_REG_HINTS)) {
++		ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "Country Setting is not allowed\n");
++		return;
++	}
++
++	if (!ath10k_regdom_changes(ar, request->alpha2)) {
++		ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "Country is already set\n");
++		return;
++	}
++
++	/* Set the country code to the firmware and will receive
++	 * the WMI_REG_CHAN_LIST_CC EVENT for updating the
++	 * reg info
++	 */
++	memcpy(&set_current_param.alpha2, request->alpha2, 2);
++	set_current_param.alpha2[2] = '\0';
++
++	spin_lock_bh(&ar->data_lock);
++	memcpy(&ar->alpha2, &set_current_param.alpha2, 3);
++	spin_unlock_bh(&ar->data_lock);
++
++	ret = ath10k_wmi_set_current_country_cmd(ar, &set_current_param);
++	if (ret) {
++		ath10k_warn(ar, "failed set current country code: %d\n", ret);
++		return;
++	}
++
++	ar->regdom_set_by_user = true;
++
++	ath10k_info(ar, "User requested country %c%c (regulatory update will come from firmware)\n", request->alpha2[0], request->alpha2[1]);
++}
++
++static void ath10k_copy_regd(struct ieee80211_regdomain *regd_orig, struct ieee80211_regdomain *regd_copy)
++{
++	u8 i;
++
++	/* The caller should have checked error conditions */
++	memcpy(regd_copy, regd_orig, sizeof(*regd_orig));
++
++	for (i = 0; i < regd_orig->n_reg_rules; i++)
++		memcpy(&regd_copy->reg_rules[i], &regd_orig->reg_rules[i], sizeof(struct ieee80211_reg_rule));
++}
++
++int ath10k_reg_update(struct ath10k *ar)
++{
++	struct ieee80211_regdomain *regd, *regd_copy = NULL;
++	int ret, regd_len;
++
++	spin_lock_bh(&ar->data_lock);
++
++	/* Prefer the latest regd update over default if it's available */
++	if (ar->new_regd) {
++		regd = ar->new_regd;
++	} else {
++		/* Apply the regd received during init through
++		 * WMI_REG_CHAN_LIST_CC event. In case of failure to
++		 * receive the regd, initialize with a default world
++		 * regulatory.
++		 */
++		if (ar->default_regd) {
++			regd = ar->default_regd;
++		} else {
++			ath10k_warn(ar, "failed to receive default regd during init\n");
++			regd = (struct ieee80211_regdomain *)&ath10k_world_regd;
++		}
++	}
++
++	if (!regd) {
++		ret = -EINVAL;
++		spin_unlock_bh(&ar->data_lock);
++		goto err;
++	}
++
++	regd_len = sizeof(*regd) + (regd->n_reg_rules * sizeof(struct ieee80211_reg_rule));
++
++	regd_copy = kzalloc(regd_len, GFP_ATOMIC);
++	if (regd_copy)
++		ath10k_copy_regd(regd, regd_copy);
++
++	spin_unlock_bh(&ar->data_lock);
++
++	if (!regd_copy) {
++		ret = -ENOMEM;
++		goto err;
++	}
++
++	/* Use non-sync version like ath11k to avoid RTNL assertion.
++	 * This function handles RTNL locking internally when needed.
++	 */
++	ret = regulatory_set_wiphy_regd(ar->hw->wiphy, regd_copy);
++
++	kfree(regd_copy);
++
++	if (ret)
++		goto err;
++
++	if (ar->state == ATH10K_STATE_ON) {
++		ret = ath10k_update_channel_list(ar, true);
++		if (ret)
++			goto err;
++	}
++
++	/* Note: ar->new_regd is NOT freed here. It remains allocated until
++	 * the next regulatory update from firmware (see ath10k_reg_chan_list_event)
++	 * or until driver cleanup. This matches ath11k behavior.
++	 */
++
++	return 0;
++err:
++	ath10k_warn(ar, "failed to perform regd update: %d\n", ret);
++	return ret;
++}
++
++static enum nl80211_dfs_regions ath10k_map_fw_dfs_region(enum ath10k_dfs_region dfs_region)
++{
++	switch (dfs_region) {
++	case ATH10K_DFS_REG_FCC:
++	case ATH10K_DFS_REG_CN:
++		return NL80211_DFS_FCC;
++	case ATH10K_DFS_REG_ETSI:
++	case ATH10K_DFS_REG_KR:
++		return NL80211_DFS_ETSI;
++	case ATH10K_DFS_REG_MKK:
++	case ATH10K_DFS_REG_MKK_N:
++		return NL80211_DFS_JP;
++	default:
++		return NL80211_DFS_UNSET;
++	}
++}
++
++static u32 ath10k_map_fw_reg_flags(u16 reg_flags)
++{
++	u32 flags = 0;
++
++	if (reg_flags & REGULATORY_CHAN_NO_IR)
++		flags |= NL80211_RRF_NO_IR;
++
++	if (reg_flags & REGULATORY_CHAN_RADAR)
++		flags |= NL80211_RRF_DFS;
++
++	if (reg_flags & REGULATORY_CHAN_NO_OFDM)
++		flags |= NL80211_RRF_NO_OFDM;
++
++	if (reg_flags & REGULATORY_CHAN_INDOOR_ONLY)
++		flags |= NL80211_RRF_NO_OUTDOOR;
++
++	if (reg_flags & REGULATORY_CHAN_NO_HT40)
++		flags |= NL80211_RRF_NO_HT40;
++
++	if (reg_flags & REGULATORY_CHAN_NO_80MHZ)
++		flags |= NL80211_RRF_NO_80MHZ;
++
++	if (reg_flags & REGULATORY_CHAN_NO_160MHZ)
++		flags |= NL80211_RRF_NO_160MHZ;
++
++	return flags;
++}
++
++static bool ath10k_reg_can_intersect(struct ieee80211_reg_rule *rule1, struct ieee80211_reg_rule *rule2)
++{
++	u32 start_freq1, end_freq1;
++	u32 start_freq2, end_freq2;
++
++	start_freq1 = rule1->freq_range.start_freq_khz;
++	start_freq2 = rule2->freq_range.start_freq_khz;
++
++	end_freq1 = rule1->freq_range.end_freq_khz;
++	end_freq2 = rule2->freq_range.end_freq_khz;
++
++	if ((start_freq1 >= start_freq2 && start_freq1 < end_freq2) ||
++	    (start_freq2 > start_freq1 && start_freq2 < end_freq1))
++		return true;
++
++	return false;
++}
++
++/**
++ * ath10k_reg_intersect_rules() - Intersect two regulatory rules
++ * @rule1: First regulatory rule
++ * @rule2: Second regulatory rule
++ * @new_rule: Output rule containing intersection
++ *
++ * Creates a new rule that is the intersection of rule1 and rule2,
++ * taking the most restrictive values from both.
++ */
++static void ath10k_reg_intersect_rules(struct ieee80211_reg_rule *rule1, struct ieee80211_reg_rule *rule2, struct ieee80211_reg_rule *new_rule)
++{
++	u32 start_freq1, end_freq1;
++	u32 start_freq2, end_freq2;
++	u32 freq_diff, max_bw;
++
++	start_freq1 = rule1->freq_range.start_freq_khz;
++	start_freq2 = rule2->freq_range.start_freq_khz;
++
++	end_freq1 = rule1->freq_range.end_freq_khz;
++	end_freq2 = rule2->freq_range.end_freq_khz;
++
++	new_rule->freq_range.start_freq_khz = max_t(u32, start_freq1, start_freq2);
++	new_rule->freq_range.end_freq_khz = min_t(u32, end_freq1, end_freq2);
++
++	freq_diff = new_rule->freq_range.end_freq_khz - new_rule->freq_range.start_freq_khz;
++	max_bw = min_t(u32, rule1->freq_range.max_bandwidth_khz, rule2->freq_range.max_bandwidth_khz);
++	new_rule->freq_range.max_bandwidth_khz = min_t(u32, max_bw, freq_diff);
++
++	new_rule->power_rule.max_antenna_gain = min_t(u32, rule1->power_rule.max_antenna_gain, rule2->power_rule.max_antenna_gain);
++
++	new_rule->power_rule.max_eirp = min_t(u32, rule1->power_rule.max_eirp, rule2->power_rule.max_eirp);
++
++	/* Use the flags of both the rules */
++	new_rule->flags = rule1->flags | rule2->flags;
++
++	/* To be safe, use the max cac timeout of both rules */
++	new_rule->dfs_cac_ms = max_t(u32, rule1->dfs_cac_ms, rule2->dfs_cac_ms);
++}
++
++static struct ieee80211_regdomain *ath10k_reg_intersect(struct ieee80211_regdomain *default_regd, struct ieee80211_regdomain *curr_regd)
++{
++	u8 num_old_regd_rules, num_curr_regd_rules, num_new_regd_rules;
++	struct ieee80211_reg_rule *old_rule, *curr_rule, *new_rule;
++	struct ieee80211_regdomain *new_regd = NULL;
++	u8 i, j, k;
++
++	num_old_regd_rules = default_regd->n_reg_rules;
++	num_curr_regd_rules = curr_regd->n_reg_rules;
++	num_new_regd_rules = 0;
++
++	/* Find the number of intersecting rules to allocate new regd memory */
++	for (i = 0; i < num_old_regd_rules; i++) {
++		old_rule = default_regd->reg_rules + i;
++		for (j = 0; j < num_curr_regd_rules; j++) {
++			curr_rule = curr_regd->reg_rules + j;
++
++			if (ath10k_reg_can_intersect(old_rule, curr_rule))
++				num_new_regd_rules++;
++		}
++	}
++
++	if (!num_new_regd_rules)
++		return NULL;
++
++	new_regd = kzalloc(sizeof(*new_regd) + (num_new_regd_rules * sizeof(struct ieee80211_reg_rule)), GFP_ATOMIC);
++
++	if (!new_regd)
++		return NULL;
++
++	/* We set the new country and dfs region directly and only trim
++	 * the freq, power, antenna gain by intersecting with the
++	 * default regdomain. Also MAX of the dfs cac timeout is selected.
++	 */
++	new_regd->n_reg_rules = num_new_regd_rules;
++	memcpy(new_regd->alpha2, curr_regd->alpha2, sizeof(new_regd->alpha2));
++	new_regd->dfs_region = curr_regd->dfs_region;
++	new_rule = new_regd->reg_rules;
++
++	for (i = 0, k = 0; i < num_old_regd_rules; i++) {
++		old_rule = default_regd->reg_rules + i;
++		for (j = 0; j < num_curr_regd_rules; j++) {
++			curr_rule = curr_regd->reg_rules + j;
++
++			if (ath10k_reg_can_intersect(old_rule, curr_rule))
++				ath10k_reg_intersect_rules(old_rule, curr_rule, (new_rule + k++));
++		}
++	}
++	return new_regd;
++}
++
++static const char * ath10k_reg_get_regdom_str(enum nl80211_dfs_regions dfs_region)
++{
++	switch (dfs_region) {
++	case NL80211_DFS_FCC:
++		return "FCC";
++	case NL80211_DFS_ETSI:
++		return "ETSI";
++	case NL80211_DFS_JP:
++		return "JP";
++	default:
++		return "UNSET";
++	}
++}
++
++static u16 ath10k_reg_adjust_bw(u16 start_freq, u16 end_freq, u16 max_bw)
++{
++	u16 bw;
++
++	if (end_freq <= start_freq)
++		return 0;
++
++	bw = end_freq - start_freq;
++	bw = min_t(u16, bw, max_bw);
++
++	if (bw >= 80 && bw < 160)
++		bw = 80;
++	else if (bw >= 40 && bw < 80)
++		bw = 40;
++	else if (bw >= 20 && bw < 40)
++		bw = 20;
++	else
++		bw = 0;
++
++	return bw;
++}
++
++static void ath10k_reg_update_rule(struct ieee80211_reg_rule *reg_rule, u32 start_freq, u32 end_freq, u32 bw, u32 ant_gain, u32 reg_pwr, u32 reg_flags)
++{
++	reg_rule->freq_range.start_freq_khz = MHZ_TO_KHZ(start_freq);
++	reg_rule->freq_range.end_freq_khz = MHZ_TO_KHZ(end_freq);
++	reg_rule->freq_range.max_bandwidth_khz = MHZ_TO_KHZ(bw);
++	reg_rule->power_rule.max_antenna_gain = DBI_TO_MBI(ant_gain);
++	reg_rule->power_rule.max_eirp = DBM_TO_MBM(reg_pwr);
++	reg_rule->flags = reg_flags;
++}
++
++static void ath10k_reg_update_weather_radar_band(struct ath10k *ar, struct ieee80211_regdomain *regd, struct cur_reg_rule *reg_rule, u8 *rule_idx, u32 flags, u16 max_bw)
++{
++	u32 start_freq;
++	u32 end_freq;
++	u16 bw;
++	u8 i;
++
++	i = *rule_idx;
++
++	/* there might be situations when even the input rule must be dropped */
++	i--;
++
++	/* frequencies below weather radar */
++	bw = ath10k_reg_adjust_bw(reg_rule->start_freq, ETSI_WEATHER_RADAR_BAND_LOW, max_bw);
++	if (bw > 0) {
++		i++;
++
++		ath10k_reg_update_rule(regd->reg_rules + i, reg_rule->start_freq, ETSI_WEATHER_RADAR_BAND_LOW,
++				       bw, reg_rule->ant_gain, reg_rule->reg_power, flags);
++
++		ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "\t%d. (%d - %d @ %d) (%d, %d) (%d ms) (FLAGS %d)\n",
++			   i + 1, reg_rule->start_freq, ETSI_WEATHER_RADAR_BAND_LOW, bw, reg_rule->ant_gain,
++			   reg_rule->reg_power, regd->reg_rules[i].dfs_cac_ms, flags);
++	}
++
++	/* weather radar frequencies */
++	start_freq = max_t(u32, reg_rule->start_freq, ETSI_WEATHER_RADAR_BAND_LOW);
++	end_freq = min_t(u32, reg_rule->end_freq, ETSI_WEATHER_RADAR_BAND_HIGH);
++
++	bw = ath10k_reg_adjust_bw(start_freq, end_freq, max_bw);
++	if (bw > 0) {
++		i++;
++
++		ath10k_reg_update_rule(regd->reg_rules + i, start_freq, end_freq, bw, reg_rule->ant_gain, reg_rule->reg_power, flags);
++
++		regd->reg_rules[i].dfs_cac_ms = ETSI_WEATHER_RADAR_BAND_CAC_TIMEOUT;
++
++		ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "\t%d. (%d - %d @ %d) (%d, %d) (%d ms) (FLAGS %d)\n",
++			   i + 1, start_freq, end_freq, bw, reg_rule->ant_gain, reg_rule->reg_power,
++			   regd->reg_rules[i].dfs_cac_ms, flags);
++	}
++
++	/* frequencies above weather radar */
++	bw = ath10k_reg_adjust_bw(ETSI_WEATHER_RADAR_BAND_HIGH, reg_rule->end_freq, max_bw);
++	if (bw > 0) {
++		i++;
++
++		ath10k_reg_update_rule(regd->reg_rules + i, ETSI_WEATHER_RADAR_BAND_HIGH, reg_rule->end_freq, bw,
++				       reg_rule->ant_gain, reg_rule->reg_power, flags);
++
++		ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "\t%d. (%d - %d @ %d) (%d, %d) (%d ms) (FLAGS %d)\n",
++			   i + 1, ETSI_WEATHER_RADAR_BAND_HIGH, reg_rule->end_freq, bw, reg_rule->ant_gain,
++			   reg_rule->reg_power, regd->reg_rules[i].dfs_cac_ms, flags);
++	}
++
++	*rule_idx = i;
++}
++
++struct ieee80211_regdomain *ath10k_reg_build_regd(struct ath10k *ar, struct cur_regulatory_info *reg_info, bool intersect)
++{
++	struct ieee80211_regdomain *tmp_regd, *default_regd, *new_regd = NULL;
++	struct cur_reg_rule *reg_rule;
++	u8 i = 0, j = 0;
++	u8 num_rules;
++	u16 max_bw;
++	u32 flags;
++
++	num_rules = reg_info->num_5ghz_reg_rules + reg_info->num_2ghz_reg_rules;
++
++	if (!num_rules)
++		return NULL;
++
++	/* Add max additional rules to accommodate weather radar band */
++	if (reg_info->dfs_region == ATH10K_DFS_REG_ETSI)
++		num_rules += 2;
++
++	tmp_regd = kzalloc(sizeof(*tmp_regd) + (num_rules * sizeof(struct ieee80211_reg_rule)), GFP_ATOMIC);
++	if (!tmp_regd)
++		return NULL;
++
++	memcpy(tmp_regd->alpha2, reg_info->alpha2, REG_ALPHA2_LEN);
++	tmp_regd->dfs_region = ath10k_map_fw_dfs_region(reg_info->dfs_region);
++
++	ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "Building regulatory domain: Country=%c%c DFS_region=%s rules=%d\n",
++		   reg_info->alpha2[0], reg_info->alpha2[1], ath10k_reg_get_regdom_str(tmp_regd->dfs_region),
++		   num_rules);
++
++	/* Update reg_rules[] below. Firmware is expected to
++	 * send these rules in order(2 GHz rules first and then 5 GHz)
++	 */
++	for (; i < num_rules; i++) {
++		if (reg_info->num_2ghz_reg_rules && (i < reg_info->num_2ghz_reg_rules)) {
++			reg_rule = reg_info->reg_rules_2ghz_ptr + i;
++			max_bw = min_t(u16, reg_rule->max_bw, reg_info->max_bw_2ghz);
++			flags = 0;
++		} else if (reg_info->num_5ghz_reg_rules && (j < reg_info->num_5ghz_reg_rules)) {
++			reg_rule = reg_info->reg_rules_5ghz_ptr + j++;
++			max_bw = min_t(u16, reg_rule->max_bw, reg_info->max_bw_5ghz);
++			flags = NL80211_RRF_AUTO_BW;
++		} else {
++			break;
++		}
++
++		flags |= ath10k_map_fw_reg_flags(reg_rule->flags);
++
++		ath10k_reg_update_rule(tmp_regd->reg_rules + i, reg_rule->start_freq, reg_rule->end_freq, max_bw,
++				       reg_rule->ant_gain, reg_rule->reg_power, flags);
++
++		/* Update dfs cac timeout if the dfs domain is ETSI and the
++		 * new rule covers weather radar band.
++		 * Default value of '0' corresponds to 60s timeout, so no
++		 * need to update that for other rules.
++		 */
++		if (flags & NL80211_RRF_DFS && reg_info->dfs_region == ATH10K_DFS_REG_ETSI &&
++		   (reg_rule->end_freq > ETSI_WEATHER_RADAR_BAND_LOW &&
++		    reg_rule->start_freq < ETSI_WEATHER_RADAR_BAND_HIGH)){
++			ath10k_reg_update_weather_radar_band(ar, tmp_regd, reg_rule, &i, flags, max_bw);
++			continue;
++		}
++
++		ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "\t%d. (%d - %d @ %d) (%d, %d) (%d ms) (FLAGS %d)\n",
++			   i + 1, reg_rule->start_freq, reg_rule->end_freq, max_bw, reg_rule->ant_gain,
++			   reg_rule->reg_power, tmp_regd->reg_rules[i].dfs_cac_ms, flags);
++	}
++
++	tmp_regd->n_reg_rules = i;
++
++	if (intersect) {
++
++		default_regd = ar->default_regd;
++
++		/* Get a new regd by intersecting the received regd with
++		 * our default regd.
++		 */
++		new_regd = ath10k_reg_intersect(default_regd, tmp_regd);
++		kfree(tmp_regd);
++		if (!new_regd)
++			ath10k_warn(ar, "Unable to create intersected regdomain\n");
++	} else {
++		new_regd = tmp_regd;
++	}
++
++	return new_regd;
++}
++
++/**
++ * ath10k_reg_revert_firmware_state() - Revert firmware to previous regulatory state
++ * @ar: ath10k device
++ *
++ * This function reverts the firmware regulatory state when the driver fails to
++ * process a new regulatory domain but the firmware has already accepted it.
++ * This ensures regulatory uniformity between driver and firmware.
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int ath10k_reg_revert_firmware_state(struct ath10k *ar)
++{
++	struct cur_set_current_country_params revert_param = {};
++	u8 prev_alpha2_copy[REG_ALPHA2_LEN + 1];
++	int ret;
++
++	/* Read prev_alpha2 under lock */
++	spin_lock_bh(&ar->data_lock);
++	if (ar->prev_alpha2[0] == '\0') {
++		spin_unlock_bh(&ar->data_lock);
++		ath10k_warn(ar, "No previous country code to revert to (first boot?)\n");
++		return -EINVAL;
++	}
++	memcpy(prev_alpha2_copy, ar->prev_alpha2, sizeof(prev_alpha2_copy));
++	spin_unlock_bh(&ar->data_lock);
++
++	/* Send previous country code back to firmware */
++	memcpy(&revert_param.alpha2, prev_alpha2_copy, 2);
++	revert_param.alpha2[2] = '\0';
++
++	ret = ath10k_wmi_set_current_country_cmd(ar, &revert_param);
++	if (ret) {
++		ath10k_warn(ar, "Failed to revert country code to firmware: %d\n", ret);
++		return ret;
++	}
++
++	/* Restore driver's alpha2 to previous value under lock */
++	spin_lock_bh(&ar->data_lock);
++	memcpy(ar->alpha2, prev_alpha2_copy, sizeof(ar->alpha2));
++	spin_unlock_bh(&ar->data_lock);
++
++	/* Send SCAN_CHAN_LIST with previous regulatory domain
++	 * Note: We use the current default_regd which should still be valid
++	 * since the new regd that failed hasn't been committed yet.
++	 */
++	if (ar->state == ATH10K_STATE_ON) {
++		ret = ath10k_update_channel_list(ar, false);
++		if (ret) {
++			ath10k_warn(ar, "Failed to update channel list during revert: %d\n", ret);
++			return ret;
++		}
++	}
++
++	ath10k_warn(ar, "Reverted firmware to previous regulatory state %c%c\n",
++		    prev_alpha2_copy[0], prev_alpha2_copy[1]);
++
++	return 0;
++}
++
++void ath10k_reg_update_work(struct work_struct *work)
++{
++	struct ath10k *ar = container_of(work, struct ath10k, regd_update_work);
++	int ret;
++
++	ret = ath10k_reg_update(ar);
++	if (ret)
++		ath10k_reg_revert_firmware_state(ar); /* Attempt to revert firmware state */
++}
++
++/**
++ * ath10k_reg_fallback_work() - Work function to handle regulatory fallback
++ * @work: work structure
++ *
++ * This work function is called when the driver needs to revert firmware
++ * regulatory state. It runs in process context where it's safe to call
++ * functions that may sleep (WMI commands, mutex operations).
++ */
++void ath10k_reg_fallback_work(struct work_struct *work)
++{
++	struct ath10k *ar = container_of(work, struct ath10k, reg_fallback_work);
++
++	/* Attempt to revert firmware state */
++	ath10k_reg_revert_firmware_state(ar);
++}
++
++/**
++ * ath10k_reg_init() - Initialize self-managed regulatory for ath10k
++ * @ar: ath10k device
++ *
++ * Sets up ath10k to use self-managed regulatory mode, similar to ath11k.
++ * This allows the driver to manage its own regulatory domain without
++ * relying on the kernel's cfg80211 regulatory database.
++ */
++void ath10k_reg_init(struct ath10k *ar)
++{
++	ar->hw->wiphy->regulatory_flags = REGULATORY_WIPHY_SELF_MANAGED;
++	ar->hw->wiphy->reg_notifier = ath10k_reg_notifier_sf;
++
++	memset(ar->alpha2, 0, sizeof(ar->alpha2));
++	memset(ar->prev_alpha2, 0, sizeof(ar->prev_alpha2));
++	ar->regdom_set_by_user = false;
++
++	ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "Self-managed regulatory mode initialized\n");
++}
++#endif
+diff --git a/drivers/net/wireless/ath/ath10k/reg.h b/drivers/net/wireless/ath/ath10k/reg.h
+new file mode 100644
+index 000000000000..145fcdb6d49d
+--- /dev/null
++++ b/drivers/net/wireless/ath/ath10k/reg.h
+@@ -0,0 +1,66 @@
++/* SPDX-License-Identifier: BSD-3-Clause-Clear */
++/* Based on:
++ * * ath11k/reg.h:
++ * Copyright (c) 2019 The Linux Foundation. All rights reserved.
++ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
++ * * ath11k/reg.c:
++ * Copyright (c) 2018-2019 The Linux Foundation. All rights reserved.
++ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
++ * Author: Giedrė Šimkūnaitė <giedre.s@8devices.com>
++ */
++
++#ifndef ATH10K_REG_H
++#define ATH10K_REG_H
++
++#include <linux/kernel.h>
++#include <net/regulatory.h>
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++
++/* World regdom to be used in case default regd from fw is unavailable */
++#define ATH10K_2GHZ_CH01_11      REG_RULE(2412 - 10, 2462 + 10, 40, 0, 20, 0)
++#define ATH10K_5GHZ_5150_5350    REG_RULE(5150 - 10, 5350 + 10, 80, 0, 30,\
++					  NL80211_RRF_NO_IR)
++#define ATH10K_5GHZ_5725_5850    REG_RULE(5725 - 10, 5850 + 10, 80, 0, 30,\
++					  NL80211_RRF_NO_IR)
++
++struct ath10k;
++
++static const struct ieee80211_regdomain ath10k_world_regd = {
++	.n_reg_rules = 3,
++	.alpha2 =  "00",
++	.reg_rules = {
++		ATH10K_2GHZ_CH01_11,
++		ATH10K_5GHZ_5150_5350,
++		ATH10K_5GHZ_5725_5850,
++	}
++};
++
++/* DFS regdomains supported by Firmware */
++enum ath10k_dfs_region {
++	ATH10K_DFS_REG_UNSET,
++	ATH10K_DFS_REG_FCC,
++	ATH10K_DFS_REG_ETSI,
++	ATH10K_DFS_REG_MKK,
++	ATH10K_DFS_REG_CN,
++	ATH10K_DFS_REG_KR,
++	ATH10K_DFS_REG_MKK_N,
++	ATH10K_DFS_REG_UNDEF,
++};
++
++/* ATH10K Regulatory API's */
++void ath10k_reg_init(struct ath10k *ar);
++void ath10k_reg_update_work(struct work_struct *work);
++void ath10k_reg_fallback_work(struct work_struct *work);
++struct ieee80211_regdomain * ath10k_reg_build_regd(struct ath10k *ar, struct cur_regulatory_info *reg_info, bool intersect);
++int ath10k_reg_update(struct ath10k *ar);
++#else
++static inline void ath10k_reg_init(struct ath10k *ar) {}
++static inline void ath10k_reg_update_work(struct work_struct *work) {}
++static inline void ath10k_reg_fallback_work(struct work_struct *work) {}
++static inline struct ieee80211_regdomain * ath10k_re_build_regd(struct ath10k *ar, struct cur_regulatory_info *reg_info, bool intersect)
++{
++	return NULL;
++}
++static inline int ath10k_reg_update(struct ath10k *ar) { return 0; }
++#endif
++#endif
+diff --git a/drivers/net/wireless/ath/ath10k/wmi-ops.h b/drivers/net/wireless/ath/ath10k/wmi-ops.h
+index aa57d807491c..76a858871f47 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi-ops.h
++++ b/drivers/net/wireless/ath/ath10k/wmi-ops.h
+@@ -16,6 +16,10 @@ struct wmi_ops {
+ 	void (*map_svc)(const __le32 *in, unsigned long *out, size_t len);
+ 	void (*map_svc_ext)(const __le32 *in, unsigned long *out, size_t len);
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	int (*pull_reg_chan_cc_list)(struct ath10k *ar, struct sk_buff *skb,
++				     struct cur_regulatory_info *reg_info);
++#endif
+ 	int (*pull_scan)(struct ath10k *ar, struct sk_buff *skb,
+ 			 struct wmi_scan_ev_arg *arg);
+ 	int (*pull_mgmt_rx)(struct ath10k *ar, struct sk_buff *skb,
+@@ -56,6 +60,9 @@ struct wmi_ops {
+ 
+ 	enum wmi_txbf_conf (*get_txbf_conf_scheme)(struct ath10k *ar);
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	struct sk_buff * (*gen_pdev_set_current_country)(struct ath10k *ar, struct cur_set_current_country_params *param);
++#endif
+ 	struct sk_buff *(*gen_pdev_suspend)(struct ath10k *ar, u32 suspend_opt);
+ 	struct sk_buff *(*gen_pdev_resume)(struct ath10k *ar);
+ 	struct sk_buff *(*gen_pdev_set_base_macaddr)(struct ath10k *ar,
+@@ -263,6 +270,18 @@ ath10k_wmi_map_svc_ext(struct ath10k *ar, const __le32 *in, unsigned long *out,
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++static inline int
++ath10k_wmi_pull_reg_chan_cc_list(struct ath10k *ar, struct sk_buff *skb,
++				 struct cur_regulatory_info *reg_info)
++{
++	if (!ar->wmi.ops->pull_reg_chan_cc_list)
++		return -EOPNOTSUPP;
++
++	return ar->wmi.ops->pull_reg_chan_cc_list(ar, skb, reg_info);
++}
++#endif
++
+ static inline int
+ ath10k_wmi_pull_scan(struct ath10k *ar, struct sk_buff *skb,
+ 		     struct wmi_scan_ev_arg *arg)
+@@ -545,6 +564,25 @@ ath10k_wmi_pdev_set_base_macaddr(struct ath10k *ar, const u8 macaddr[ETH_ALEN])
+ 				   ar->wmi.cmd->pdev_set_base_macaddr_cmdid);
+ }
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++static inline int
++ath10k_wmi_set_current_country_send(struct ath10k *ar, struct cur_set_current_country_params *param)
++{
++	struct sk_buff *skb;
++	u32 cmd_id;
++
++	if (!ar->wmi.ops->gen_pdev_set_current_country)
++		return -EOPNOTSUPP;
++
++	skb = ar->wmi.ops->gen_pdev_set_current_country(ar, param);
++	if (IS_ERR(skb))
++		return PTR_ERR(skb);
++
++	cmd_id = ar->wmi.cmd->set_current_country_cmdid;
++	return ath10k_wmi_cmd_send(ar, skb, cmd_id);
++}
++#endif
++
+ static inline int
+ ath10k_wmi_pdev_suspend_target(struct ath10k *ar, u32 suspend_opt)
+ {
+diff --git a/drivers/net/wireless/ath/ath10k/wmi-tlv.c b/drivers/net/wireless/ath/ath10k/wmi-tlv.c
+index 8318740b1272..e54bf3765b84 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi-tlv.c
++++ b/drivers/net/wireless/ath/ath10k/wmi-tlv.c
+@@ -64,6 +64,10 @@ static const struct wmi_tlv_policy wmi_tlv_policies[] = {
+ 		= { .min_len = sizeof(struct wmi_tlv_wow_event_info) },
+ 	[WMI_TLV_TAG_STRUCT_TX_PAUSE_EVENT]
+ 		= { .min_len = sizeof(struct wmi_tlv_tx_pause_ev) },
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	[WMI_TLV_TAG_STRUCT_REG_CHAN_LIST_CC_EVENT]
++		= { .min_len = sizeof(struct wmi_reg_chan_cc_list_event)},
++#endif
+ };
+ 
+ static int
+@@ -162,6 +166,75 @@ static u16 ath10k_wmi_tlv_len(const void *ptr)
+ 	return __le16_to_cpu((((const struct wmi_tlv *)ptr) - 1)->len);
+ }
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++static inline enum cc_setting_code
++ath10k_wmi_cc_setting_code_to_reg(u32 status_code)
++{
++	switch (status_code) {
++	case 0:
++		return REG_SET_CC_STATUS_PASS;
++	case 1:
++		return REG_CURRENT_ALPHA2_NOT_FOUND;
++	case 2:
++		return REG_INIT_ALPHA2_NOT_FOUND;
++	case 3:
++		return REG_SET_CC_CHANGE_NOT_ALLOWED;
++	case 4:
++		return REG_SET_CC_STATUS_NO_MEMORY;
++	case 5:
++		return REG_SET_CC_STATUS_FAIL;
++	default:
++		return REG_SET_CC_STATUS_FAIL;
++	}
++}
++
++/**
++ * create_reg_rules_from_wmi() - Convert WMI regulatory rules to kernel format
++ * @num_reg_rules: Number of regulatory rules to convert
++ * @wmi_reg_rule: Pointer to WMI regulatory rule structures
++ *
++ * Parses WMI regulatory rules from firmware and converts them to kernel's
++ * cur_reg_rule format.
++ *
++ * Return: Pointer to allocated reg_rule array, or NULL on failure
++ */
++static struct cur_reg_rule *
++create_reg_rules_from_wmi(u32 num_reg_rules, struct wmi_regulatory_rule_struct *wmi_reg_rule)
++{
++	struct cur_reg_rule *reg_rule_ptr;
++	u32 count;
++
++	reg_rule_ptr = kcalloc(num_reg_rules, sizeof(*reg_rule_ptr),
++			       GFP_ATOMIC);
++
++	if (!reg_rule_ptr)
++		return NULL;
++
++	for (count = 0; count < num_reg_rules; count++) {
++		reg_rule_ptr[count].start_freq =
++			FIELD_GET(REG_RULE_START_FREQ,
++				  __le32_to_cpu(wmi_reg_rule[count].freq_info));
++		reg_rule_ptr[count].end_freq =
++			FIELD_GET(REG_RULE_END_FREQ,
++				  __le32_to_cpu(wmi_reg_rule[count].freq_info));
++		reg_rule_ptr[count].max_bw =
++			FIELD_GET(REG_RULE_MAX_BW,
++				  __le32_to_cpu(wmi_reg_rule[count].bw_pwr_info));
++		reg_rule_ptr[count].reg_power =
++			FIELD_GET(REG_RULE_REG_PWR,
++				  __le32_to_cpu(wmi_reg_rule[count].bw_pwr_info));
++		reg_rule_ptr[count].ant_gain =
++			FIELD_GET(REG_RULE_ANT_GAIN,
++				  __le32_to_cpu(wmi_reg_rule[count].bw_pwr_info));
++		reg_rule_ptr[count].flags =
++			FIELD_GET(REG_RULE_FLAGS,
++				  __le32_to_cpu(wmi_reg_rule[count].flag_info));
++	}
++
++	return reg_rule_ptr;
++}
++#endif
++
+ /**************/
+ /* TLV events */
+ /**************/
+@@ -794,6 +867,11 @@ static void ath10k_wmi_tlv_op_rx(struct ath10k *ar, struct sk_buff *skb)
+ 	case WMI_TLV_MGMT_TX_BUNDLE_COMPLETION_EVENTID:
+ 		ath10k_wmi_event_mgmt_tx_bundle_compl(ar, skb);
+ 		break;
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	case WMI_TLV_REG_CHAN_LIST_CC_EVENTID:
++		ath10k_wmi_event_reg_chan_cc_list(ar, skb);
++		break;
++#endif
+ 	default:
+ 		ath10k_dbg(ar, ATH10K_DBG_WMI, "Unknown eventid: %d\n", id);
+ 		break;
+@@ -803,6 +881,97 @@ static void ath10k_wmi_tlv_op_rx(struct ath10k *ar, struct sk_buff *skb)
+ 	dev_kfree_skb(skb);
+ }
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++static int ath10k_wmi_tlv_op_pull_reg_chan_cc_list_ev(struct ath10k *ar, struct sk_buff *skb, struct cur_regulatory_info *reg_info)
++{
++	const void **tb;
++	const struct wmi_reg_chan_cc_list_event *ev;
++	struct wmi_regulatory_rule_struct *wmi_reg_rule;
++	u32 num_2ghz_reg_rules, num_5ghz_reg_rules;
++	int ret;
++
++	tb = ath10k_wmi_tlv_parse_alloc(ar, skb->data, skb->len, GFP_ATOMIC);
++	if (IS_ERR(tb)) {
++		ret = PTR_ERR(tb);
++		ath10k_warn(ar, "failed to parse tlv: %d\n", ret);
++		return ret;
++	}
++
++	ev = tb[WMI_TLV_TAG_STRUCT_REG_CHAN_LIST_CC_EVENT];
++	if (!ev) {
++		kfree(tb);
++		return -EPROTO;
++	}
++
++	reg_info->num_2ghz_reg_rules = __le32_to_cpu(ev->num_2ghz_reg_rules);
++	reg_info->num_5ghz_reg_rules = __le32_to_cpu(ev->num_5ghz_reg_rules);
++
++	if (!(reg_info->num_2ghz_reg_rules + reg_info->num_5ghz_reg_rules)) {
++		ath10k_warn(ar, "No regulatory rules available in the event info\n");
++		return -EINVAL;
++	}
++
++	memcpy(reg_info->alpha2, &ev->alpha2,
++	       REG_ALPHA2_LEN);
++
++	reg_info->dfs_region = __le32_to_cpu(ev->dfs_region);
++	reg_info->phybitmap = __le32_to_cpu(ev->phybitmap);
++	reg_info->num_phy = __le32_to_cpu(ev->num_phy);
++	reg_info->phy_id = __le32_to_cpu(ev->phy_id);
++	reg_info->ctry_code = __le32_to_cpu(ev->country_id);
++	reg_info->reg_dmn_pair = __le32_to_cpu(ev->domain_code);
++	reg_info->status_code = ath10k_wmi_cc_setting_code_to_reg(__le32_to_cpu(ev->status_code));
++	ath10k_dbg(ar, ATH10K_DBG_WMI, "status_code %d", reg_info->status_code);
++
++	reg_info->min_bw_2ghz = __le32_to_cpu(ev->min_bw_2ghz);
++	reg_info->max_bw_2ghz = __le32_to_cpu(ev->max_bw_2ghz);
++	reg_info->min_bw_5ghz = __le32_to_cpu(ev->min_bw_5ghz);
++	reg_info->max_bw_5ghz = __le32_to_cpu(ev->max_bw_5ghz);
++
++	num_2ghz_reg_rules = reg_info->num_2ghz_reg_rules;
++	num_5ghz_reg_rules = reg_info->num_5ghz_reg_rules;
++
++	ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "Firmware regulatory event: Country=%c%c DFS_region=%d\n",
++		    reg_info->alpha2[0], reg_info->alpha2[1], reg_info->dfs_region);
++
++	ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "  Bandwidth limits: 2GHz [%d-%d] MHz, 5GHz [%d-%d] MHz\n",
++		    reg_info->min_bw_2ghz, reg_info->max_bw_2ghz,
++		    reg_info->min_bw_5ghz, reg_info->max_bw_5ghz);
++
++	ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "  Regulatory rules: 2GHz=%d rules, 5GHz=%d rules\n",
++		    num_2ghz_reg_rules, num_5ghz_reg_rules);
++
++	wmi_reg_rule = (struct wmi_regulatory_rule_struct *)((u8 *)ev
++					+ sizeof(*ev) + WMI_TLV_HDR_SIZE);
++
++	if (num_2ghz_reg_rules) {
++		reg_info->reg_rules_2ghz_ptr =
++				create_reg_rules_from_wmi(num_2ghz_reg_rules,
++							  wmi_reg_rule);
++		if (!reg_info->reg_rules_2ghz_ptr) {
++			ath10k_warn(ar, "Unable to Allocate memory for 2 GHz rules\n");
++			return -ENOMEM;
++		}
++	}
++
++	if (num_5ghz_reg_rules) {
++		wmi_reg_rule += num_2ghz_reg_rules;
++		reg_info->reg_rules_5ghz_ptr =
++				create_reg_rules_from_wmi(num_5ghz_reg_rules,
++							  wmi_reg_rule);
++		if (!reg_info->reg_rules_5ghz_ptr) {
++			ath10k_warn(ar, "Unable to Allocate memory for 5 GHz rules\n");
++			return -ENOMEM;
++		}
++	}
++
++	ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "processed regulatory channel list\n");
++
++	kfree(tb);
++	return 0;
++}
++#endif
++
+ static int ath10k_wmi_tlv_op_pull_scan_ev(struct ath10k *ar,
+ 					  struct sk_buff *skb,
+ 					  struct wmi_scan_ev_arg *arg)
+@@ -1710,6 +1879,33 @@ static int ath10k_wmi_tlv_op_pull_echo_ev(struct ath10k *ar,
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++static struct sk_buff *
++ath10k_wmi_tlv_op_gen_pdev_set_current_country(struct ath10k *ar, struct cur_set_current_country_params *param)
++{
++	struct wmi_set_current_country_params *cmd;
++	struct wmi_tlv *tlv;
++	struct sk_buff *skb;
++
++	skb = ath10k_wmi_alloc_skb(ar, sizeof(*tlv) + sizeof(*cmd));
++	if (!skb)
++		return ERR_PTR(-ENOMEM);
++
++	tlv = (void *)skb->data;
++	tlv->tag = __cpu_to_le16(WMI_TLV_TAG_STRUCT_SET_CURRENT_COUNTRY_CMD);
++	tlv->len = __cpu_to_le16(sizeof(*cmd));
++	cmd = (void *)tlv->value;
++	u32 alpha2_packed = param->alpha2[0] |
++                      (param->alpha2[1] << 8) |
++                      (param->alpha2[2] << 16);
++	cmd->alpha2 = __cpu_to_le32(alpha2_packed);
++	cmd->pdev_id = __cpu_to_le32(0);
++
++	ath10k_dbg(ar, ATH10K_DBG_WMI, "wmi tlv pdev set current country\n");
++	return skb;
++}
++#endif
++
+ static struct sk_buff *
+ ath10k_wmi_tlv_op_gen_pdev_suspend(struct ath10k *ar, u32 opt)
+ {
+@@ -4176,6 +4372,9 @@ ath10k_wmi_tlv_op_gen_vdev_spectral_enable(struct ath10k *ar, u32 vdev_id,
+ 
+ static struct wmi_cmd_map wmi_tlv_cmd_map = {
+ 	.init_cmdid = WMI_TLV_INIT_CMDID,
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	.set_current_country_cmdid = WMI_TLV_SET_CURRENT_COUNTRY_CMDID,
++#endif
+ 	.start_scan_cmdid = WMI_TLV_START_SCAN_CMDID,
+ 	.stop_scan_cmdid = WMI_TLV_STOP_SCAN_CMDID,
+ 	.scan_chan_list_cmdid = WMI_TLV_SCAN_CHAN_LIST_CMDID,
+@@ -4529,6 +4728,9 @@ static const struct wmi_ops wmi_tlv_ops = {
+ 	.map_svc = wmi_tlv_svc_map,
+ 	.map_svc_ext = wmi_tlv_svc_map_ext,
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	.pull_reg_chan_cc_list = ath10k_wmi_tlv_op_pull_reg_chan_cc_list_ev,
++#endif
+ 	.pull_scan = ath10k_wmi_tlv_op_pull_scan_ev,
+ 	.pull_mgmt_rx = ath10k_wmi_tlv_op_pull_mgmt_rx_ev,
+ 	.pull_mgmt_tx_compl = ath10k_wmi_tlv_op_pull_mgmt_tx_compl_ev,
+@@ -4548,6 +4750,9 @@ static const struct wmi_ops wmi_tlv_ops = {
+ 	.pull_echo_ev = ath10k_wmi_tlv_op_pull_echo_ev,
+ 	.get_txbf_conf_scheme = ath10k_wmi_tlv_txbf_conf_scheme,
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	.gen_pdev_set_current_country = ath10k_wmi_tlv_op_gen_pdev_set_current_country,
++#endif
+ 	.gen_pdev_suspend = ath10k_wmi_tlv_op_gen_pdev_suspend,
+ 	.gen_pdev_resume = ath10k_wmi_tlv_op_gen_pdev_resume,
+ 	.gen_pdev_set_rd = ath10k_wmi_tlv_op_gen_pdev_set_rd,
+diff --git a/drivers/net/wireless/ath/ath10k/wmi-tlv.h b/drivers/net/wireless/ath/ath10k/wmi-tlv.h
+index 83a8f07a687f..0321a8e1cbbf 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi-tlv.h
++++ b/drivers/net/wireless/ath/ath10k/wmi-tlv.h
+@@ -67,6 +67,9 @@ enum wmi_tlv_grp_id {
+ 	WMI_TLV_GRP_IPA,
+ 	WMI_TLV_GRP_MDNS_OFL,
+ 	WMI_TLV_GRP_SAP_OFL,
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	WMI_TLV_GRP_REGULATORY = 0x3a,
++#endif
+ };
+ 
+ enum wmi_tlv_cmd_id {
+@@ -291,6 +294,9 @@ enum wmi_tlv_cmd_id {
+ 	WMI_TLV_MDNS_SET_RESPONSE_CMDID,
+ 	WMI_TLV_MDNS_GET_STATS_CMDID,
+ 	WMI_TLV_SAP_OFL_ENABLE_CMDID = WMI_TLV_CMD(WMI_TLV_GRP_SAP_OFL),
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	WMI_TLV_SET_CURRENT_COUNTRY_CMDID = WMI_TLV_CMD(WMI_TLV_GRP_REGULATORY),
++#endif
+ };
+ 
+ enum wmi_tlv_event_id {
+@@ -401,6 +407,9 @@ enum wmi_tlv_event_id {
+ 	WMI_TLV_MDNS_STATS_EVENTID = WMI_TLV_EV(WMI_TLV_GRP_MDNS_OFL),
+ 	WMI_TLV_SAP_OFL_ADD_STA_EVENTID = WMI_TLV_EV(WMI_TLV_GRP_SAP_OFL),
+ 	WMI_TLV_SAP_OFL_DEL_STA_EVENTID,
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	WMI_TLV_REG_CHAN_LIST_CC_EVENTID = WMI_TLV_EV(WMI_TLV_GRP_REGULATORY),
++#endif
+ };
+ 
+ enum wmi_tlv_pdev_param {
+@@ -2680,4 +2689,37 @@ struct wmi_tlv_mgmt_tx_cmd {
+ 	__le32 frame_len;
+ 	__le32 buf_len;
+ } __packed;
++
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++#define WMI_TLV_HDR_SIZE    (sizeof_field(struct wmi_tlv, len) + sizeof_field(struct wmi_tlv, tag))
++
++struct wmi_regulatory_rule_struct {
++	__le32 tlv_header;
++	__le32 freq_info;
++	__le32 bw_pwr_info;
++	__le32 flag_info;
++} __packed;
++
++struct wmi_reg_chan_cc_list_event {
++	__le32 status_code;
++	__le32 phy_id;
++	__le32 alpha2;
++	__le32 num_phy;
++	__le32 country_id;
++	__le32 domain_code;
++	__le32 dfs_region;
++	__le32 phybitmap;
++	__le32 min_bw_2ghz;
++	__le32 max_bw_2ghz;
++	__le32 min_bw_5ghz;
++	__le32 max_bw_5ghz;
++	__le32 num_2ghz_reg_rules;
++	__le32 num_5ghz_reg_rules;
++} __packed;
++
++struct wmi_set_current_country_params {
++	__le32 pdev_id; // Most likely not used...
++	__le32 alpha2;
++} __packed;
++#endif
+ #endif
+diff --git a/drivers/net/wireless/ath/ath10k/wmi.c b/drivers/net/wireless/ath/ath10k/wmi.c
+index 818aea99f85e..cd92e78ccb12 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi.c
++++ b/drivers/net/wireless/ath/ath10k/wmi.c
+@@ -21,6 +21,9 @@
+ #include "hw.h"
+ #include "hif.h"
+ #include "txrx.h"
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++#include "reg.h"
++#endif
+ 
+ #define ATH10K_WMI_BARRIER_ECHO_ID 0xBA991E9
+ #define ATH10K_WMI_BARRIER_TIMEOUT_HZ (3 * HZ)
+@@ -2206,6 +2209,123 @@ static int ath10k_wmi_op_pull_scan_ev(struct ath10k *ar, struct sk_buff *skb,
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++static bool ath10k_reg_is_world_alpha(char *alpha)
++{
++	if (alpha[0] == '0' && alpha[1] == '0')
++		return true;
++
++	if (alpha[0] == 'n' && alpha[1] == 'a')
++		return true;
++
++	return false;
++}
++
++int ath10k_wmi_event_reg_chan_cc_list(struct ath10k *ar, struct sk_buff *skb)
++{
++	struct cur_regulatory_info reg_info = {};
++	bool intersect = false;
++	struct ieee80211_regdomain *regd = NULL;
++	int ret;
++
++	ret = ath10k_wmi_pull_reg_chan_cc_list(ar, skb, &reg_info);
++	if (ret) {
++		ath10k_warn(ar, "failed to extract regulatory info from received event\n");
++		goto mem_free;
++	}
++
++	if (reg_info.status_code != REG_SET_CC_STATUS_PASS) {
++		/* In case of failure to set the requested ctry,
++		 * fw retains the current regd. We print a failure info
++		 * and return from here.
++		 */
++		ath10k_warn(ar, "Failed to set the requested Country regulatory setting\n");
++		goto mem_free;
++	}
++
++	/* Save current country code before processing new regulatory update
++	 * This allows us to revert firmware state if driver processing fails.
++	 * Skip during firmware restart - we want to keep the pre-crash prev_alpha2.
++	 * */
++	spin_lock_bh(&ar->data_lock);
++	if (ar->alpha2[0] != '\0' && !test_bit(ATH10K_FLAG_RESTARTING, &ar->dev_flags)) {
++		memcpy(ar->prev_alpha2, ar->alpha2, sizeof(ar->prev_alpha2));
++	}
++
++	/* Update alpha2 with the new country code from firmware */
++	memcpy(ar->alpha2, reg_info.alpha2, 2);
++	ar->alpha2[2] = '\0';
++
++	/* Avoid default reg rule updates sent during FW recovery if
++	 * it is already available
++	 */
++	if (test_bit(ATH10K_FLAG_RESTARTING, &ar->dev_flags) &&
++	    ar->default_regd) {
++		spin_unlock_bh(&ar->data_lock);
++		goto mem_free;
++	}
++	spin_unlock_bh(&ar->data_lock);
++
++	/* Avoid multiple overwrites to default regd, during core
++	 * stop-start after mac registration.
++	 */
++	if (ar->default_regd && !ar->new_regd &&
++	    !memcmp((char *)ar->default_regd->alpha2,
++		    (char *)reg_info.alpha2, 2))
++		goto mem_free;
++
++	/* Intersect new rules with default regd if a new country setting was
++	 * requested, i.e a default regd was already set during initialization
++	 * and the regd coming from this event has a valid country info.
++	 */
++	if (ar->default_regd &&
++	    !ath10k_reg_is_world_alpha((char *)
++		ar->default_regd->alpha2) &&
++	    !ath10k_reg_is_world_alpha((char *)reg_info.alpha2))
++			intersect = true;
++
++	regd = ath10k_reg_build_regd(ar, &reg_info, intersect);
++	if (!regd) {
++		ath10k_warn(ar, "failed to build regd from reg_info\n");
++		goto fallback;
++	}
++
++	spin_lock_bh(&ar->data_lock);
++
++	if (ar->default_regd) {
++		/* Already initialized - this is a dynamic update */
++		kfree(ar->new_regd);
++		ar->new_regd = regd;
++		/* Queue work to apply the new regulatory domain */
++		queue_work(ar->workqueue, &ar->regd_update_work);
++	} else {
++		/* First time - set as default_regd for initialization */
++		ar->default_regd = regd;
++
++		ath10k_dbg(ar, ATH10K_DBG_REGULATORY, "regulatory domain received during initialization\n");
++		/* This will be applied during mac_register via ath10k_reg_update() */
++	}
++
++	spin_unlock_bh(&ar->data_lock);
++
++	goto mem_free;
++
++fallback:
++	/* Firmware has already accepted the new country code but driver
++	 * failed to process it. We must revert firmware to maintain
++	 * regulatory uniformity between driver and firmware.
++	 * Queue work to handle revert in process context (allows WMI commands/mutex).
++	 */
++	queue_work(ar->workqueue, &ar->reg_fallback_work);
++
++mem_free:
++	kfree(reg_info.reg_rules_2ghz_ptr);
++	kfree(reg_info.reg_rules_5ghz_ptr);
++
++	return ret;
++}
++#endif
++
+ int ath10k_wmi_event_scan(struct ath10k *ar, struct sk_buff *skb)
+ {
+ 	struct wmi_scan_ev_arg arg = {};
+@@ -7068,6 +7188,13 @@ ath10k_wmi_10x_op_gen_start_scan(struct ath10k *ar,
+ 	return skb;
+ }
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++int ath10k_wmi_set_current_country_cmd(struct ath10k *ar, struct cur_set_current_country_params *param)
++{
++	return ath10k_wmi_set_current_country_send(ar, param);
++}
++#endif
++
+ void ath10k_wmi_start_scan_init(struct ath10k *ar,
+ 				struct wmi_start_scan_arg *arg)
+ {
+diff --git a/drivers/net/wireless/ath/ath10k/wmi.h b/drivers/net/wireless/ath/ath10k/wmi.h
+index 9146df98fcee..bebe12c49fae 100644
+--- a/drivers/net/wireless/ath/ath10k/wmi.h
++++ b/drivers/net/wireless/ath/ath10k/wmi.h
+@@ -64,6 +64,21 @@ struct wmi_cmd_hdr {
+ #define HTC_PROTOCOL_VERSION    0x0002
+ #define WMI_PROTOCOL_VERSION    0x0002
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++/* Regaulatory Rule Flags Passed by FW */
++#define REGULATORY_CHAN_DISABLED     BIT(0)
++#define REGULATORY_CHAN_NO_IR        BIT(1)
++#define REGULATORY_CHAN_RADAR        BIT(3)
++#define REGULATORY_CHAN_NO_OFDM      BIT(6)
++#define REGULATORY_CHAN_INDOOR_ONLY  BIT(9)
++
++#define REGULATORY_CHAN_NO_HT40      BIT(4)
++#define REGULATORY_CHAN_NO_80MHZ     BIT(7)
++#define REGULATORY_CHAN_NO_160MHZ    BIT(8)
++#define REGULATORY_CHAN_NO_20MHZ     BIT(11)
++#define REGULATORY_CHAN_NO_10MHZ     BIT(12)
++#endif
++
+ /*
+  * There is no signed version of __le32, so for a temporary solution come
+  * up with our own version. The idea is from fs/ntfs/endian.h.
+@@ -860,6 +875,9 @@ struct wmi_mac_addr {
+ 
+ struct wmi_cmd_map {
+ 	u32 init_cmdid;
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++	u32 set_current_country_cmdid;
++#endif
+ 	u32 start_scan_cmdid;
+ 	u32 stop_scan_cmdid;
+ 	u32 scan_chan_list_cmdid;
+@@ -7409,6 +7427,60 @@ struct wmi_pdev_bb_timing_cfg_cmd {
+ 	__le32 bb_xpa_timing;
+ } __packed;
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++#define REG_RULE_START_FREQ			0x0000ffff
++#define REG_RULE_END_FREQ			0xffff0000
++#define REG_RULE_FLAGS				0x0000ffff
++#define REG_RULE_MAX_BW				0x0000ffff
++#define REG_RULE_REG_PWR			0x00ff0000
++#define REG_RULE_ANT_GAIN			0xff000000
++#define REG_RULE_PSD_INFO			BIT(0)
++#define REG_RULE_PSD_EIRP			0xff0000
++
++#define REG_ALPHA2_LEN 2
++
++struct cur_reg_rule {
++	u16 start_freq;
++	u16 end_freq;
++	u16 max_bw;
++	u8 reg_power;
++	u8 ant_gain;
++	u16 flags;
++};
++
++enum cc_setting_code {
++	REG_SET_CC_STATUS_PASS = 0,
++	REG_CURRENT_ALPHA2_NOT_FOUND = 1,
++	REG_INIT_ALPHA2_NOT_FOUND = 2,
++	REG_SET_CC_CHANGE_NOT_ALLOWED = 3,
++	REG_SET_CC_STATUS_NO_MEMORY = 4,
++	REG_SET_CC_STATUS_FAIL = 5,
++};
++
++struct cur_regulatory_info {
++	enum cc_setting_code status_code;
++	u8 num_phy;
++	u8 phy_id;
++	u16 reg_dmn_pair;
++	u16 ctry_code;
++	u8 alpha2[REG_ALPHA2_LEN + 1];
++	u32 dfs_region;
++	u32 phybitmap;
++	u32 min_bw_2ghz;
++	u32 max_bw_2ghz;
++	u32 min_bw_5ghz;
++	u32 max_bw_5ghz;
++	u32 num_2ghz_reg_rules;
++	u32 num_5ghz_reg_rules;
++	struct cur_reg_rule *reg_rules_2ghz_ptr;
++	struct cur_reg_rule *reg_rules_5ghz_ptr;
++};
++
++struct cur_set_current_country_params {
++	u8 alpha2[3];
++};
++#endif
++
+ struct ath10k;
+ struct ath10k_vif;
+ struct ath10k_fw_stats_pdev;
+@@ -7427,6 +7499,9 @@ int ath10k_wmi_connect(struct ath10k *ar);
+ int ath10k_wmi_cmd_send(struct ath10k *ar, struct sk_buff *skb, u32 cmd_id);
+ int ath10k_wmi_cmd_send_nowait(struct ath10k *ar, struct sk_buff *skb,
+ 			       u32 cmd_id);
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++int ath10k_wmi_set_current_country_cmd(struct ath10k *ar, struct cur_set_current_country_params *param);
++#endif
+ void ath10k_wmi_start_scan_init(struct ath10k *ar, struct wmi_start_scan_arg *arg);
+ 
+ void ath10k_wmi_pull_pdev_stats_base(const struct wmi_pdev_stats_base *src,
+@@ -7449,6 +7524,9 @@ void ath10k_wmi_put_wmi_channel(struct ath10k *ar, struct wmi_channel *ch,
+ 				const struct wmi_channel_arg *arg);
+ int ath10k_wmi_start_scan_verify(const struct wmi_start_scan_arg *arg);
+ 
++#ifdef CONFIG_ATH10K_REG_OFFLOAD
++int ath10k_wmi_event_reg_chan_cc_list(struct ath10k *ar, struct sk_buff *skb);
++#endif
+ int ath10k_wmi_event_scan(struct ath10k *ar, struct sk_buff *skb);
+ int ath10k_wmi_event_mgmt_rx(struct ath10k *ar, struct sk_buff *skb);
+ int ath10k_wmi_event_mgmt_tx_compl(struct ath10k *ar, struct sk_buff *skb);
