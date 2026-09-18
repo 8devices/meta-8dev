@@ -15,7 +15,11 @@ This layer depends on:
 	branch: wrynose
 
 	URI: https://git.openembedded.org/meta-openembedded
-	layers: meta-networking
+	layers: meta-oe, meta-networking, meta-multimedia
+	branch: wrynose
+
+	URI: https://github.com/qualcomm-linux/meta-qcom.git
+	layers: meta-qcom
 	branch: wrynose
 
 	URI: https://github.com/sbabic/meta-swupdate.git

@@ -16,6 +16,10 @@ This layer depends on:
 	layers: meta-oe
 	branch: wrynose
 
+	URI: https://github.com/qualcomm-linux/meta-qcom.git
+	layers: meta-qcom
+	branch: wrynose
+
 ## Quick Start
 
 ### Supported Hardware
