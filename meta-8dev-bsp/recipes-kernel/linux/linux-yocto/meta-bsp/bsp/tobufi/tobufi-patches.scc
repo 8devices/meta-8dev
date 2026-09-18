@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "TobuFi kernel patchset (git format-patch export)"
+define KFEATURE_COMPATIBILITY all
+
+patch patches/0001-clk-qcom-fix-QCOM-GDSC-dependency-for-QCS404-GCC.patch
+patch patches/0002-power-reset-qcom-pon-fix-gen2-shift-for-pms405-pon.patch
+patch patches/0003-power-reset-qcom-pon-add-run-time-pon-subtype-detect.patch
+patch patches/0004-ath11k-monitor-fix-trailing-8-bytes-in-captured-fram.patch
+patch patches/0005-ath11k-monitor-add-per-antenna-RX-RSSI-information.patch
+patch patches/0006-ath11k-monitor-fix-incorrect-reported-radiotap-rate-.patch
+patch patches/0007-wifi-ath11k-fix-RCU-stall-while-reaping-monitor-dest.patch
+patch patches/0008-wifi-ath11k-add-srng-lock-for-ath11k_hal_srng_-in-mo.patch
+patch patches/0009-ath11k-allow-board-variant-override-module-param.patch
+patch patches/0010-extcon-usb-gpio-Add-support-for-optional-VBUS-output.patch
+patch patches/0011-net-stmmac-qcom-ethqos-add-MAC-address-override-modu.patch
+patch patches/0012-wifi-ath10k-snoc-add-MAC-address-override-module-par.patch
+patch patches/0013-msm_serial-add-additional-2-uart-ports.patch
+patch patches/0014-cpufreq-auto-enable-cpufreq_dt-for-arm_qcom_cpufreq_.patch
+patch patches/0015-thermal-add-generic-virtual-thermal-zones-driver-con.patch
+patch patches/0016-thermal-add-generic-virtual-thermal-zones-driver-sou.patch
+patch patches/0017-thermal-add-generic-virtual-thermal-zones-driver-des.patch
+patch patches/0018-ath10k-add-5885-MHz-5G-channel.patch
+patch patches/0019-ath10k-add-self-managed-mode-implementation.patch
+patch patches/0020-ath11k-fix-NSS-support-for-non-sequential-tx-rx-chai.patch
+patch patches/0021-wifi-cfg80211-pass-net_device-to-.set_monitor_channe.patch
+patch patches/0022-wifi-ath11k-remove-peer-extra-rssi-update.patch
+patch patches/0023-wifi-cfg80211-export-DFS-CAC-time-and-usable-state-h.patch
+patch patches/0024-wifi-ath11k-modify-the-calculation-of-the-average-si.patch
+patch patches/0025-wifi-ath11k-fix-CAC-running-state-during-virtual-int.patch
+patch patches/0026-wifi-ath11k-fix-station-reported-RX-RSSI-levels.patch
+patch patches/0027-wifi-ath11k-update-channel-list-in-reg-notifier-inst.patch
+patch patches/0028-wifi-ath11k-fix-the-GI-column-order-in-the-per-stati.patch
+patch patches/0029-wifi-mac80211-do-not-seed-a-mesh-peer-s-management-r.patch
+patch patches/0030-devicetree-document-virtual-thermal-zones-driver-bin.patch
+patch patches/0031-thermal-virtual-thermal-zones-fix-lock-nesting-DT-or.patch
+patch patches/0032-thermal-virtual-thermal-zones-correct-the-Kconfig-he.patch
