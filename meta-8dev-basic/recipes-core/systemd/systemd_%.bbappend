@@ -11,11 +11,15 @@ PACKAGECONFIG:remove:8dev-basic = "userdb"
 
 # Trim unused systemd components from this headless board (drops binaries+units):
 #   machined/nss-mymachines (containers), backlight, vconsole (no VT), hibernate,
-#   quotacheck, binfmt, localed, rfkill (Ethernet-only), polkit (root-only),
+#   quotacheck, localed, rfkill (Ethernet-only), polkit (root-only),
 #   (debug; drop for production).
+#
+# binfmt stays: systemd-binfmt is what registers an interpreter for a format
+# the kernel cannot dispatch on its own, and :remove cannot be undone from a
+# layer above this one.
 PACKAGECONFIG:remove:8dev-basic = "\
     machined nss-mymachines backlight vconsole hibernate \
-    quotacheck binfmt localed rfkill polkit \
+    quotacheck localed rfkill polkit \
 "
 
 # networkd-wait-online --any drop-in and a resolved drop-in disabling LLMNR/mDNS
