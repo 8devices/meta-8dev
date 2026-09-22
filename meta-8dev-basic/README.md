@@ -59,3 +59,4 @@ to reporting issues, submitting code changes and patches.
 ## Maintainers
 
 	Edvinas Stunžėnas <edvinas@8devices.com>
+	Justinas Grauslis <justinas@8devices.com>
