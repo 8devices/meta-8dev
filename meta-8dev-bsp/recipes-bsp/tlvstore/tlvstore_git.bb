@@ -4,13 +4,13 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=901493caddf8a4e12c198b0a0431c2f9"
 
 inherit update-rc.d systemd
 
-COMPATIBLE_MACHINE = "tobufi"
+COMPATIBLE_MACHINE = "citron"
 
 DEPENDS += "xz"
 
 TLVS_BRANCH ?= "master"
 TLVS_URI ?= "git://github.com/8devices/tlvstore.git;protocol=https"
-TLVS_REV ?= "bf53bdb5f84143d2f2347d6a26242ef57bf09e35"
+TLVS_REV ?= "ad919ee81ad2aa0d09f623ae72687fdbe8ce1422"
 
 SRC_URI = "\
     ${TLVS_URI};branch=${TLVS_BRANCH} \
@@ -18,21 +18,16 @@ SRC_URI = "\
     file://eeprom-dump.service \
     file://eeprom-dump.init \
 "
-SRC_URI:append:tobufi = "\
-    file://8dev-tobufi-store \
-    file://8dev-tobufi-legacy \
-    file://8dev-tobufi-initial \
+SRC_URI:append:citron = "\
+    file://8dev-citron-store \
 "
 SRCREV = "${TLVS_REV}"
 
-S = "${WORKDIR}/git"
-
 STORAGE_FILE = "/etc/eeprom"
-STORAGE_FILE:tobufi = "/sys/bus/i2c/devices/0-0056/eeprom"
+STORAGE_FILE:citron = "/dev/disk/by-partlabel/tlvstore"
 STORAGE_SIZE = "8192"
-STORAGE_SIZE:tobufi = ""
+STORAGE_SIZE:citron = ""
 STORAGE_OFFSET = "0"
-STORAGE_OFFSET:tobufi = "512"
 
 EXTRA_OEMAKE += "\
     CONFIG_TLVS_FILE=${STORAGE_FILE} \
@@ -43,20 +38,18 @@ EXTRA_OEMAKE += "\
 do_install() {
     install -d ${D}/${bindir}
     install -m 0755 ${B}/tlvs ${D}/${bindir}/
-    install -m 0755 ${WORKDIR}/eeprom-dump.sh ${D}/${bindir}/eeprom-dump
+    install -m 0755 ${UNPACKDIR}/eeprom-dump.sh ${D}/${bindir}/eeprom-dump
 
     install -d ${D}/${systemd_unitdir}/system
-    install -m 0644 ${WORKDIR}/eeprom-dump.service ${D}/${systemd_unitdir}/system
+    install -m 0644 ${UNPACKDIR}/eeprom-dump.service ${D}/${systemd_unitdir}/system
 
     install -d ${D}${sysconfdir}/init.d
-    install -m 0755 ${WORKDIR}/eeprom-dump.init ${D}${sysconfdir}/init.d/eeprom-dump
+    install -m 0755 ${UNPACKDIR}/eeprom-dump.init ${D}${sysconfdir}/init.d/eeprom-dump
 }
 
-do_install:append:tobufi() {
+do_install:append:citron() {
     install -d ${D}${datadir}/tlvs
-    install -m 0644 ${WORKDIR}/8dev-tobufi-store ${D}${datadir}/tlvs
-    install -m 0644 ${WORKDIR}/8dev-tobufi-legacy ${D}${datadir}/tlvs
-    install -m 0644 ${WORKDIR}/8dev-tobufi-initial ${D}${datadir}/tlvs
+    install -m 0644 ${UNPACKDIR}/8dev-citron-store ${D}${datadir}/tlvs
 }
 
 FILES:${PN} += "${datadir}"

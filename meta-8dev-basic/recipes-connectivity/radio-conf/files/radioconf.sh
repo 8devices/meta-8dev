@@ -49,9 +49,8 @@ vapid() {
 	echo $i
 }
 
-# Drivers that support 802.11ax (HE). Both ath11k and ath12k (QCN9274) do, so
-# HE/he_oper config applies to either. NOTE: this is not the same as the
-# ath11k-specific bdf_variant band switch in setup_band(), which stays ath11k.
+# Both ath11k and ath12k do HE. Not to be confused with the ath11k-only
+# bdf_variant switch in setup_band().
 phy_has_he() {
 	[ "$PHY_DRIVER" = "ath11k" ] || [ "$PHY_DRIVER" = "ath12k" ]
 }
@@ -126,10 +125,8 @@ init_supplicant() {
 
 init_vap_defaults() {
 	[ -n "$BAND" ] || {
-		# Detect band from the first usable channel frequency. List it via
-		# 'iw phy <phy> channels' (frequencies are not in 'info' on all
-		# drivers) and match "<freq> MHz" without a fractional part - ath12k
-		# prints "5180 MHz", older ath11k "5180.0 MHz"; both match.
+		# 'channels', not 'info': not every driver lists frequencies in info.
+		# The match tolerates both "5180 MHz" (ath12k) and "5180.0 MHz" (ath11k).
 		first_freq=$(iw phy "$PHY_NAME" channels 2>/dev/null | \
 			grep -oE "[0-9]+ MHz" | \
 			awk '{print $1; exit}')
@@ -265,18 +262,14 @@ apply_hostap() {
 	fi
 
 	if [ "$SSID" = "-" ] || [ -z "$SSID" -a -z "`hostap_get ssid`" ]; then
-		# When SSID is not specified and is
-		# absent in config generate and
-		# backfill it to ensure VAP startup.
+		# Backfilled because the VAP will not start without one.
 		SSID=8dev-`macid`
 		idx=`vapid`
 		[ "$idx" -le "1" ] || SSID=$SSID"#$idx"
 	fi
 	if [ -n "$SSID" ]; then
 		hostap_set ssid "$SSID"
-		# When SSID is specified so should
-		# hide SSID and WPA PSK passphrase,
-		# otherwise reset them.
+		# An explicit SSID also carries the hide/PSK settings; reset them otherwise.
 		[ -n "$HIDE" ] || HIDE=-
 		[ -n "$WPAPSK" ] || WPAPSK=-
 	fi
@@ -310,28 +303,23 @@ apply_supplicant() {
 	if [ -n "$FREQLIST" -a "$FREQLIST" != "-" ]; then
 		freqs=`echo $FREQLIST | sed 's/,/ /g'`
 		# XXX: scan_freq is not supported by our wpa_supplicant
-		#supplicant scan_freq "$freqs" global
 		supplicant_set freq_list "$freqs" global
 	elif [ -n "$CHANNEL" -a "$CHANNEL" -ne 0 ] && [ "$CHANNEL" -gt "1000" ]; then
 		supplicant_set freq_list "$CHANNEL" global
 	elif [ -n "$CHANNEL" -a "$CHANNEL" -ne 0 ] && [ "$CHANNEL" -lt "1000" ]; then
 		# XXX: supplicant works with channel frequencies
-		# convert channel number to channel frequency
 		find_channel_frequency "$CHANNEL"	
 		supplicant_set freq_list "$chan_freq" global
 	fi
 	if [ "$SSID" = "-" ] || [ -z "$SSID" -a -z "`supplicant_get ssid`" ]; then
-		# When SSID is not specified and is
-		# abscent in config generate and
-		# backfill it to ensure VAP startup.
+		# Backfilled because the VAP will not start without one.
 		SSID=8dev-`macid`
 		idx=`vapid`
 		[ "$idx" -le "1" ] || SSID=$SSID"#$idx"
 	fi
 	if [ -n "$SSID" ]; then
 		supplicant_set ssid \"$SSID\"
-		# When SSID is specified so should be
-		# WPA PSK passphrase, otherwise reset it.
+		# An explicit SSID also carries the PSK; reset it otherwise.
 		[ -n "$WPAPSK" ] || WPAPSK=-
 	fi
 	if [ -n "$WPAPSK" ]; then
@@ -416,9 +404,7 @@ setup_txpower() {
 }
 
 setup_band() {
-	# ath11k-specific: switches the board-data variant via the ath11k module
-	# bdf_variant parameter. ath12k has no equivalent, so this is a no-op there
-	# by design (do NOT widen to ath12k - it relies on ath11k-only features).
+	# ath11k only: ath12k has no bdf_variant equivalent, so do not widen this.
 	[ "$PHY_DRIVER" = "ath11k" ] || return
 	read -r BDF_VARIANT < /sys/module/ath11k/parameters/bdf_variant
 	[ "$BAND" = "$BDF_VARIANT" ] && return
@@ -430,9 +416,8 @@ setup_band() {
 }
 
 parse_radio() {
-	# radios.cfg entry: "radioN=<device syspath>[ <phy ordinal>]". The optional
-	# ordinal selects among a split-radio module's PHYs (e.g. QCN9274); single-PHY
-	# radios omit it.
+	# "radioN=<device syspath>[ <phy ordinal>]". The ordinal picks among a
+	# split-radio module's PHYs; single-PHY radios omit it.
 	radio_line=$(sed -n "s/^$RADIO=//p" "$RADIOS_CONFIG")
 	[ -z "$radio_line" ] && help "no such radio found: $RADIO"
 	radio_dev=${radio_line%% *}
@@ -440,9 +425,8 @@ parse_radio() {
 	[ "$radio_line" != "$radio_dev" ] && radio_idx=${radio_line#* }
 	radio_dev=$(readlink -nf "$radio_dev")
 
-	# The kernel wiphy index is a global, probe-order-dependent counter, so the
-	# ordinal is resolved against this device's own PHYs sorted by index rather
-	# than matched to a fixed index value.
+	# The wiphy index is a global, probe-order-dependent counter, so the ordinal is
+	# resolved against this device's own PHYs rather than a fixed index.
 	PHY_NAME=$(for phy in /sys/class/ieee80211/*; do
 			[ -e "$phy/index" ] || continue
 			[ "$(readlink -nf "$phy/device")" = "$radio_dev" ] || continue

@@ -1,9 +1,22 @@
 #!/bin/sh
 
-# parse S/N, board ID and radio ID
 boardinfo
 
 slot_suffix=$(systemctl show-environment 2>/dev/null | grep "^SLOT_SUFFIX=" | cut -d'=' -f2)
+
+# SLOT_SUFFIX is not always in the systemd environment, so fall back to the A/B
+# controller's per-slot report and take the one flagged Active.
+case "$slot_suffix" in
+    _a|_b) ;;
+    *)
+        case "$(qbootctl 2>/dev/null |
+                awk '/^SLOT /{s=$2; sub(":","",s)} /Active/ && $NF=="1" && s {print s; exit}')" in
+            a) slot_suffix=_a ;;
+            b) slot_suffix=_b ;;
+        esac
+        ;;
+esac
+
 [ -n "$DEBUG" ] && echo -n "BOOTBANK_SLOT=" || echo -n "SW partition: "
 case "$slot_suffix" in
     _a) echo "A" ;;

@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Adreno GPU + DPU for the camx build. SoC nodes only, so every Citron carrier
+ * shares it; the SOM dtsi disables them all. mdss/dispcc are repeated so this
+ * stands alone.
+ */
+
+&gpucc {
+	status = "okay";
+};
+
+&adreno_smmu {
+	status = "okay";
+};
+
+&gmu {
+	status = "okay";
+};
+
+&gpu {
+	status = "okay";
+};
+
+&gpu_zap_shader {
+	firmware-name = "qcom/qcs6490/a660_zap.mbn";
+};
+
+/* Clock provider for mdss, so it goes first. */
+&dispcc {
+	status = "okay";
+};
+
+&mdss {
+	status = "okay";
+};
+
+/*
+ * The DPU master needs at least one interface to publish /dev/dri/card0 for the
+ * GLES-only imsdk elements, and DP is the only one that binds with nothing
+ * attached. The DP<->qmpphy link is severed in the board dts.
+ */
+&mdss_dp {
+	status = "okay";
+};

@@ -2,50 +2,64 @@
 
 /dts-v1/;
 
-#include "qcs6490-citron.dtsi"
+#include "qcs6490-citron-som.dtsi"
+#include "qcs6490-citron-common.dtsi"
+#include <dt-bindings/leds/common.h>
 
 / {
-	model = "8Devices Robonode Vision";
+	model = "8devices Robonode Vision";
 	compatible = "8devices,robovision", "8devices,citron",
 		"qcom,qcm6490";
 
 	/*
-	 * Read by the Qualcomm bootloader DTB selector (not Linux) to pick this
-	 * DTB for the running hardware. msm-id = <soc-id soc-rev>: the Kodiak SoC
-	 * family (475 SM, 497 QCM, 498 QCS, 515 SM-LTE) 6490, rev >= 1.0.
-	 * board-id = <0x00PMPmPH subtype>: hw-platform 0x20, version 1.1, subtype 2.
-	 * Must match what the CDT (citron_cdt.bin) reports or the DTB is skipped.
+	 * Cell 0 <unused:8 major:8 minor:8 platform_type:8>, cell 1 <ddr_class:3
+	 * subtype:8>. The DDR class is mandatory: UEFI compares it for equality, and
+	 * with no match it falls back to its built-in RB3gen2 tree, which has no eMMC
+	 * node, so the rootfs never appears. Must agree with the flashed CDT, and a
+	 * board with different DRAM needs a different value.
 	 */
-	qcom,msm-id = <497 0x10000>, <498 0x10000>, <475 0x10000>, <515 0x10000>;
-	qcom,board-id = <0x010120 2>;
+	qcom,board-id = <0x00010020 0x642>;
+
+	/* Common-anode LED, cathodes low-side switched by N-FETs, hence active-HIGH. */
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&rgb_led_state>;
+
+		led-red {
+			gpios = <&tlmm 117 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_RED>;
+			function = LED_FUNCTION_INDICATOR;
+			default-state = "off";
+		};
+
+		led-green {
+			gpios = <&tlmm 84 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_INDICATOR;
+			default-state = "off";
+		};
+
+		led-blue {
+			gpios = <&tlmm 125 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_BLUE>;
+			function = LED_FUNCTION_INDICATOR;
+			default-state = "off";
+		};
+	};
 };
 
 /*
- * USB roles are FIXED on this carrier, not OTG: there is no usable USB_ID/CC path
- * to the SoC, so role detection can't work. Each port is pinned to one role.
- * USB0 = device (matches the bootrom/bootloader EDL+fastboot device-mode path,
- * +5V held off), USB1 = host (+5V always on). VBUS load switches are driven by
- * fixed GPIO levels: GPIO52 USB0_PWR_SW low, GPIO53 USB1_PWR_SW high.
+ * Roles are FIXED, not OTG: no USB_ID/CC path reaches the SoC. USB0 stays a device
+ * to match the bootrom EDL/fastboot path, USB1 a host with +5V always on.
  */
-
-/* USB0 = SoC usb_1 (a600000): fixed device/gadget. +5V source held off, no ID. */
 &usb_1 {
 	dr_mode = "peripheral";
 };
 
 /*
- * No Type-C mux / pmic-glink on this carrier and the SS lanes arrive at a fixed
- * orientation, so delete the orientation-switch left at the sc7280 default.
- */
-&usb_1_qmpphy {
-	/delete-property/ orientation-switch;
-};
-
-/*
- * USB1 = SoC usb_2 (8c00000): fixed HOST, HS PHY only (USB 2.0). +5V is always on
- * via usb1_vbus below. Enable the controller + HS PHY (disabled by default in
- * sc7280). Drop the default usb-role-switch (targets the disabled EUD debugger);
- * its port node stays since eud_ep references it by phandle.
+ * USB1 is HS-only host. The stock usb-role-switch targets the disabled EUD, so drop
+ * it; the port node stays because eud_ep references it by phandle.
  */
 &usb_2 {
 	dr_mode = "host";
@@ -53,20 +67,8 @@
 	status = "okay";
 };
 
-&usb_2_hsphy {
-	vdda-pll-supply = <&vreg_l10c_0p88>;
-	vdda18-supply = <&vreg_l1c_1p8>;
-	vdda33-supply = <&vreg_l2b_3p072>;
-	status = "okay";
-};
-
-/*
- * USB VBUS PWR_EN pins for the UCS2113 load switch, held at fixed levels via the
- * regulators below: GPIO52 (USB0) low => 5V off (usb0_vbus left unenabled),
- * GPIO53 (USB1) high => 5V on (usb1_vbus always-on).
- */
+/* UCS2113 load-switch enables; the regulators below hold USB0 off and USB1 on. */
 &tlmm {
-	/* GPIO52 = USB0_PWR_SW (held low / 5V off). */
 	usb0_vbus_en_state: usb0-vbus-en-state {
 		pins = "gpio52";
 		function = "gpio";
@@ -74,7 +76,6 @@
 		bias-disable;
 	};
 
-	/* GPIO53 = USB1_PWR_SW (held high / 5V on). */
 	usb1_vbus_en_state: usb1-vbus-en-state {
 		pins = "gpio53";
 		function = "gpio";
@@ -109,41 +110,7 @@
 	};
 };
 
-/*
- * On-carrier I2C EEPROM: ST M24256E-FMC6TG (32 KB) on i2c11 (GPIO44 SDA, GPIO45
- * SCL; pinmux from sc7280). GPIO46 = WC write-protect via the at24 wp-gpios.
- * Main 32 KB array at 0x50; the "-F" 64-byte write-lockable page at 0x58 is not
- * instantiated.
- */
-
-/*
- * QUP wrapper 1 hosts i2c11 (EEPROM) and uart10/uart12; disabled by default in
- * sc7280, enable it or the OF core won't instantiate its children.
- * firmware-name is required: the GENI driver loads per-SE firmware from the
- * wrapper node for any SE the bootloader left unprogrammed (all of QUP1). Without
- * it i2c11/uart10/uart12 fail to probe (-EINVAL).
- */
-&qupv3_id_1 {
-	firmware-name = "qcom/qcs6490/qupv3fw.elf";
-	status = "okay";
-};
-
-&i2c11 {
-	clock-frequency = <400000>;
-	status = "okay";
-
-	eeprom@50 {
-		compatible = "atmel,24c256";
-		reg = <0x50>;
-		pagesize = <64>;
-		wp-gpios = <&tlmm 46 GPIO_ACTIVE_HIGH>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&eeprom_wc_state>;
-	};
-};
-
 &tlmm {
-	/* GPIO46 = EEPROM WC: GPIO output, used as the at24 write-protect line. */
 	eeprom_wc_state: eeprom-wc-state {
 		pins = "gpio46";
 		function = "gpio";
@@ -152,46 +119,8 @@
 };
 
 /*
- * Five extra 4-wire GENI UARTs (CTS/RFR/TX/RX) exposed on the carrier; pinmux is
- * in sc7280, the nodes just default to disabled. uart1/3/4 are on QUP0 (enabled
- * by default), uart10/uart12 on QUP1 (enabled above). Pin map (CTS, RFR, TX, RX):
- *   uart1  (QUP0 SE1) : gpio4-7
- *   uart3  (QUP0 SE3) : gpio12-15
- *   uart4  (QUP0 SE4) : gpio16-19
- *   uart10 (QUP1 SE2) : gpio40-43
- *   uart12 (QUP1 SE4) : gpio48-51
- */
-&uart1 {
-	status = "okay";
-};
-
-&uart3 {
-	status = "okay";
-};
-
-&uart4 {
-	status = "okay";
-};
-
-&uart10 {
-	status = "okay";
-};
-
-/*
- * uart12 uses GPIO48-51, freed from gpio-reserved-ranges in the SOM dtsi. This
- * REQUIRES the matching XBL/TZ release of those pins; without it the board hangs
- * at gpiochip bringup (see the note in qcs6490-citron.dtsi).
- */
-&uart12 {
-	status = "okay";
-};
-
-/*
- * PCIe1 (dual-lane) -> on-carrier QCN9274 Wi-Fi (ath12k). pcie1_phy + supplies
- * are enabled in the SOM dtsi; enable the controller and wire its board signals
- * (GPIO79 CLKREQ, GPIO80 WAKE, GPIO81 PERST). The QCN9274 needs no endpoint node.
- * No regulator/clock node: its rails are hardware-sequenced off +5V0 and the
- * refclk is the SoC's internal PCIE1_REFCLK, so only PERST/WAKE/CLKREQ are wired.
+ * PCIe1 (x2) -> on-carrier QCN9274 Wi-Fi. Rails are hardware-sequenced and the
+ * refclk is internal, so no regulator/clock/endpoint node is needed.
  */
 &tlmm {
 	pcie1_reset_n: pcie1-reset-n-state {
@@ -219,18 +148,8 @@
 };
 
 /*
- * PCIe0 (single lane) -> on-carrier PI7C9X2G304EV PCIe switch.
- *
- * Topology: SoC RC --(PCIe0 x1)--> PI7C9X2G304EV upstream port (port 0)
- *                                    |-- downstream port 1 --> RTL8111K Ethernet
- *                                    `-- downstream port 2 --> RTL8111K Ethernet
- *
- * pcie0_phy + supplies are enabled in the SOM dtsi; enable the controller and
- * wire only the upstream signals the SoC drives: PERST (GPIO86) and CLKREQ
- * (GPIO88). iommu-map is overridden below for the switch topology. The switch and
- * both NICs auto-enumerate (r8169 -> two net interfaces), no child nodes needed.
- * WAKE is not wired: the downstream WAKE# nets are per-NIC PME signals, not the
- * upstream link wake, and aren't needed for enumeration.
+ * PCIe0 (x1) -> PI7C9X2G304EV switch -> 2x RTL8111K. No WAKE: the downstream WAKE#
+ * nets are per-NIC PME, not the link wake.
  */
 &tlmm {
 	pcie0_reset_n: pcie0-reset-n-state {
@@ -242,256 +161,35 @@
 	};
 };
 
-&pcie0 {
-	perst-gpios = <&tlmm 86 GPIO_ACTIVE_LOW>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&pcie0_reset_n>, <&pcie0_clkreq_n>;
-
-	/*
-	 * IOMMU stream-ID map for the PI7C9X2G304 switch topology.
-	 *
-	 * The stock sc7280 map assumes one endpoint, so the two RTL8111K NICs
-	 * behind the switch get the fallback SID 0x1c00 with no domain -> arm-smmu
-	 * "Format=2 TF" faults, AER storm, dead/unstable eth. Per-device SIDs don't
-	 * work either: assigning 0x1c02 makes qcom_smmu_write_s2cr() take a sync
-	 * external abort at attach (secure-world/hyp rejecting the stream).
-	 *
-	 * The switch has no ACS, so Linux puts every pcie0 device in one iommu
-	 * group anyway. Collapse all RIDs onto the known-good 0x1c00 with
-	 * iommu-map-mask = <0x0> - one SME/S2CR reused for all, no 0x1c02 abort.
-	 * Confirmed on hardware: removes both the s2cr abort and the TF faults. (A
-	 * separate pre-existing AER RxErr/UnsupReq storm remains, unrelated to the
-	 * IOMMU.)
-	 */
-	iommu-map = <0x0 &apps_smmu 0x1c00 0x1>;
-	iommu-map-mask = <0x0>;
-
-	status = "okay";
-};
-
-/*
- * Sony IMX577 on CSI0: CSIPHY0 (CAMSS port@0), I2C on CCI0 bus 0 at 0x1a, driven
- * by the imx412 driver ("sony,imx577" shared match). camcc + CAMSS are disabled
- * on the SOM (qcs6490-citron.dtsi), so re-enable them here for the carrier.
- */
-&camcc {
-	status = "okay";
-};
-
-&camss {
-	vdda-phy-supply = <&vreg_l10c_0p88>;
-	vdda-pll-supply = <&vreg_l6b_1p2>;
-
-	status = "okay";
-
-	ports {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		port@0 {
-			reg = <0>;
-
-			csiphy0_ep: endpoint {
-				clock-lanes = <7>;
-				data-lanes = <0 1 2 3>;
-				remote-endpoint = <&imx577_ep>;
-			};
-		};
-	};
-};
-
-/* CCI0 hosts both sensors: bus 0 -> IMX577, bus 1 -> OV9282. */
-&cci0 {
-	pinctrl-0 = <&cci0_default &cci1_default>;
-	pinctrl-1 = <&cci0_sleep &cci1_sleep>;
-	status = "okay";
-};
-
-&cci0_i2c0 {
-	#address-cells = <1>;
-	#size-cells = <0>;
-
-	camera@1a {
-		compatible = "sony,imx577";
-		reg = <0x1a>;
-
-		reset-gpios = <&tlmm 113 GPIO_ACTIVE_LOW>;
-		pinctrl-names = "default", "suspend";
-		pinctrl-0 = <&cam0_default>;
-		pinctrl-1 = <&cam0_suspend>;
-
-		clocks = <&camcc CAM_CC_MCLK0_CLK>;
-		assigned-clocks = <&camcc CAM_CC_MCLK0_CLK>;
-		assigned-clock-rates = <24000000>;
-
-		/* Module self-regulates; all imx412 supplies map to the single 1.8V rail. */
-		dovdd-supply = <&vreg_l19b_1p8>;
-		avdd-supply = <&vreg_l19b_1p8>;
-		dvdd-supply = <&vreg_l19b_1p8>;
-
-		port {
-			imx577_ep: endpoint {
-				link-frequencies = /bits/ 64 <600000000>;
-				data-lanes = <1 2 3 4>;
-				remote-endpoint = <&csiphy0_ep>;
-			};
-		};
-	};
-};
+/* Camera comes from a CAMERA_STACK overlay, which also enables camcc. */
 
 &tlmm {
-	cam0_default: cam0-default-state {
-		mclk-pins {
-			pins = "gpio64";
-			function = "cam_mclk";
-			drive-strength = <2>;
-			bias-disable;
-		};
-
-		rst-pins {
-			pins = "gpio113";
-			function = "gpio";
-			drive-strength = <2>;
-			bias-disable;
-		};
-	};
-
-	cam0_suspend: cam0-suspend-state {
-		mclk-pins {
-			pins = "gpio64";
-			function = "cam_mclk";
-			drive-strength = <2>;
-			bias-pull-down;
-		};
-
-		rst-pins {
-			pins = "gpio113";
-			function = "gpio";
-			drive-strength = <2>;
-			bias-disable;
-		};
-	};
-
-	/* imx412 has no standby control; hold CAM0_STBY/PDN de-asserted (active-low, drive high). */
-	cam0_pwdn_hog: cam0-pwdn-hog {
-		gpio-hog;
-		gpios = <112 GPIO_ACTIVE_HIGH>;
+	disp0_ctrl_state: disp0-ctrl-state {
+		pins = "gpio61", "gpio39";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
 		output-high;
-		line-name = "CAM0_STBY_N";
-	};
-};
-
-/*
- * OmniVision OV9282 (1 MP mono global shutter) on CSI1: CSIPHY1 (CAMSS port@1),
- * I2C on CCI0 bus 1 at 0x60, mainline ov9282 driver (2 lanes, 400 MHz link).
- * camcc/CAMSS already enabled above; this only adds the CSIPHY1 port.
- */
-&camss {
-	ports {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		port@1 {
-			reg = <1>;
-
-			csiphy1_ep: endpoint {
-				clock-lanes = <7>;
-				data-lanes = <0 1>;
-				remote-endpoint = <&ov9282_ep>;
-			};
-		};
-	};
-};
-
-&cci0_i2c1 {
-	#address-cells = <1>;
-	#size-cells = <0>;
-
-	camera@60 {
-		compatible = "ovti,ov9282";
-		reg = <0x60>;
-
-		/* ov9282 drives XCLR high to release reset (inverse of most drivers). */
-		reset-gpios = <&tlmm 11 GPIO_ACTIVE_HIGH>;
-		pinctrl-names = "default", "suspend";
-		pinctrl-0 = <&cam1_default>;
-		pinctrl-1 = <&cam1_suspend>;
-
-		clocks = <&camcc CAM_CC_MCLK1_CLK>;
-		assigned-clocks = <&camcc CAM_CC_MCLK1_CLK>;
-		assigned-clock-rates = <24000000>;
-
-		/* Module self-regulates; all ov9282 supplies map to the single 1.8V rail (L8C). */
-		avdd-supply = <&vreg_l8c_1p62>;
-		dovdd-supply = <&vreg_l8c_1p62>;
-		dvdd-supply = <&vreg_l8c_1p62>;
-
-		port {
-			ov9282_ep: endpoint {
-				link-frequencies = /bits/ 64 <400000000>;
-				data-lanes = <1 2>;
-				remote-endpoint = <&csiphy1_ep>;
-			};
-		};
-	};
-};
-
-&tlmm {
-	cam1_default: cam1-default-state {
-		mclk-pins {
-			pins = "gpio65";
-			function = "cam_mclk";
-			drive-strength = <2>;
-			bias-disable;
-		};
-
-		rst-pins {
-			pins = "gpio11";
-			function = "gpio";
-			drive-strength = <2>;
-			bias-disable;
-		};
 	};
 
-	cam1_suspend: cam1-suspend-state {
-		mclk-pins {
-			pins = "gpio65";
-			function = "cam_mclk";
-			drive-strength = <2>;
-			bias-pull-down;
-		};
-
-		rst-pins {
-			pins = "gpio11";
-			function = "gpio";
-			drive-strength = <2>;
-			bias-disable;
-		};
+	/* Nothing references these two; they just park the remaining DISP0 pins. */
+	disp0_misc_state: disp0-misc-state {
+		pins = "gpio96", "gpio38";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
 	};
 
-	/* ov9282 has no standby control; hold CAM1_STBY/PDN de-asserted (active-low, drive high). */
-	cam1_pwdn_hog: cam1-pwdn-hog {
-		gpio-hog;
-		gpios = <27 GPIO_ACTIVE_HIGH>;
-		output-high;
-		line-name = "CAM1_STBY_N";
+	disp0_status_state: disp0-status-state {
+		pins = "gpio105", "gpio36";
+		function = "gpio";
+		bias-pull-up;
 	};
-};
 
-/* ov9282 enables supplies without setting a voltage; pin L8C to 1.8V (else idles at 1.62V floor). */
-&vreg_l8c_1p62 {
-	regulator-min-microvolt = <1800000>;
-	regulator-max-microvolt = <1800000>;
-};
-
-/*
- * Venus HW video codec. videocc is disabled on the SOM (qcs6490-citron.dtsi) and
- * the codec is disabled by default in sc7280.dtsi; re-enable both here.
- */
-&videocc {
-	status = "okay";
-};
-
-&venus {
-	status = "okay";
+	rgb_led_state: rgb-led-state {
+		pins = "gpio117", "gpio84", "gpio125";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
 };

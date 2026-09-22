@@ -10,17 +10,21 @@ however there is no hard dependency.
 
 This layer depends on:
 
-	URI: https://git.yoctoproject.org/poky
+	URI: https://git.yoctoproject.org/meta-yocto
 	layers: meta
-	branch: scarthgap
+	branch: wrynose
 
 	URI: https://git.openembedded.org/meta-openembedded
-	layers: meta-networking
-	branch: scarthgap
+	layers: meta-oe, meta-networking, meta-multimedia
+	branch: wrynose
+
+	URI: https://github.com/qualcomm-linux/meta-qcom.git
+	layers: meta-qcom
+	branch: wrynose
 
 	URI: https://github.com/sbabic/meta-swupdate.git
 	layers: meta-swupdate
-	branch: scarthgap
+	branch: wrynose
 
 ## Quick Start
 
@@ -55,4 +59,4 @@ to reporting issues, submitting code changes and patches.
 ## Maintainers
 
 	Edvinas Stunžėnas <edvinas@8devices.com>
-
+	Justinas Grauslis <justinas@8devices.com>

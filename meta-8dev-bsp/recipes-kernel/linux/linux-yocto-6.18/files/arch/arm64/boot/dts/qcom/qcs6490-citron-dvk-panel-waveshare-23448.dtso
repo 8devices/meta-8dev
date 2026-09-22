@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * DISP0 panel for the Citron dvk. Applied by the bootloader when a panel is fitted:
+ * with none attached the bridge probe fails -ENODEV and the msm component master
+ * never binds, which would cost the DPU its /dev/dri/card0.
+ */
+
+/dts-v1/;
+/plugin/;
+
+#include "qcs6490-citron-panel-waveshare-23448.dtsi"
+
+&ws_bridge {
+	power-supply = <&vreg_l2c_1p62>;
+};
+
+&ws_panel {
+	power-supply = <&vreg_l2c_1p62>;
+};
+
+/* panel-simple enables the supply without a voltage; else it idles at its floor. */
+&vreg_l2c_1p62 {
+	regulator-min-microvolt = <1800000>;
+	regulator-max-microvolt = <1800000>;
+};

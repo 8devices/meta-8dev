@@ -6,14 +6,14 @@ SRC_URI:append:8dev-basic = "\
 "
 
 do_configure:append:8dev-basic() {
-    cat ${WORKDIR}/defconfig.8dev-extra >> ${B}/hostapd/.config
+    cat ${UNPACKDIR}/defconfig.8dev-extra >> ${B}/hostapd/.config
 }
 
 do_install:append:8dev-basic() {
     install -d ${D}/${sysconfdir}
-    install -m 0644 ${WORKDIR}/default.conf ${D}/${sysconfdir}/hostapd.conf
+    install -m 0644 ${UNPACKDIR}/default.conf ${D}/${sysconfdir}/hostapd.conf
     install -d ${D}/${systemd_system_unitdir}
-    install -m 0644 ${WORKDIR}/hostapd@.service ${D}/${systemd_system_unitdir}
+    install -m 0644 ${UNPACKDIR}/hostapd@.service ${D}/${systemd_system_unitdir}
 }
 
 FILES:${PN}:append:8dev-basic = "\

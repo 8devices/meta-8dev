@@ -1,8 +1,7 @@
 [Match]
 Name=br0
 
-# br0 is the only L3 interface: it runs the DHCP client and all services bind
-# here. All eth*/wlan* interfaces are L2 ports of this bridge.
+# br0 is the only L3 interface; every eth*/wlan* is an L2 port of it.
 [Network]
 DHCP=yes
 

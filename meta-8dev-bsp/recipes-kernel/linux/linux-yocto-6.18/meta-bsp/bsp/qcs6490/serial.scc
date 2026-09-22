@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "QCS6490 serial (MSM UART + GENI)"
+define KFEATURE_COMPATIBILITY all
+
+kconf hardware serial.cfg

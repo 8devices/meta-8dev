@@ -6,37 +6,29 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI = "\
     file://radioconf.sh \
 "
-SRC_URI:append:tobufi = "\
+SRC_URI:append:citron = "\
     file://radios.cfg \
     file://radio-rename.rules \
 "
 
-SRC_URI:append:robovision = "\
-    file://radios.cfg \
-    file://radio-rename.rules \
-"
+S = "${UNPACKDIR}"
 
 do_configure[noexec] = "1"
 do_compile[noexec] = "1"
 
 do_install() {
     install -d ${D}/${sbindir}
-    install -m 0755 ${WORKDIR}/radioconf.sh ${D}/${sbindir}/radioconf
+    install -m 0755 ${UNPACKDIR}/radioconf.sh ${D}/${sbindir}/radioconf
 
-    if [ -r ${WORKDIR}/radios.cfg ]; then
+    if [ -r ${UNPACKDIR}/radios.cfg ]; then
         install -d ${D}/${sysconfdir}
-        install -m 0644 ${WORKDIR}/radios.cfg ${D}/${sysconfdir}
+        install -m 0644 ${UNPACKDIR}/radios.cfg ${D}/${sysconfdir}
     fi
 }
 
-do_install:append:tobufi() {
-    install -d ${D}${base_libdir}/udev/rules.d/
-    install -m 0644 ${WORKDIR}/radio-rename.rules ${D}${base_libdir}/udev/rules.d/
-}
-
-do_install:append:robovision() {
-    install -d ${D}${base_libdir}/udev/rules.d/
-    install -m 0644 ${WORKDIR}/radio-rename.rules ${D}${base_libdir}/udev/rules.d/
+do_install:append:citron() {
+    install -d ${D}${nonarch_base_libdir}/udev/rules.d/
+    install -m 0644 ${UNPACKDIR}/radio-rename.rules ${D}${nonarch_base_libdir}/udev/rules.d/
 }
 
 FILES:${PN} = " \
@@ -44,12 +36,8 @@ FILES:${PN} = " \
     ${sysconfdir} \
 "
 
-FILES:${PN}:append:tobufi = "\
-   ${base_libdir}/udev/ \
-"
-
-FILES:${PN}:append:robovision = "\
-   ${base_libdir}/udev/ \
+FILES:${PN}:append:citron = "\
+   ${nonarch_base_libdir}/udev/ \
 "
 
 RDEPENDS:${PN} = "hostapd wpa-supplicant iw"

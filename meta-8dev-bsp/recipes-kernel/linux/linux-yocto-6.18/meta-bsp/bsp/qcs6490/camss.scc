@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "QCS6490 CAMSS MIPI-CSI camera (mainline stack)"
+define KFEATURE_COMPATIBILITY all
+
+include cfg/8dev/v4l2-platform.scc
+include bsp/qcs6490/camcc.scc
+
+kconf hardware camss.cfg

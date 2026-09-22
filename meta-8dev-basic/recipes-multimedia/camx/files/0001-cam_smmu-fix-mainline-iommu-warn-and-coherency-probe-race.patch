@@ -1,0 +1,53 @@
+From: Justinas Grauslis <justinas@8devices.com>
+Subject: [PATCH] cam_smmu: fix mainline iommu warn and coherency probe race
+
+Upstream-Status: Inappropriate [adapts downstream camx-dlkm to a mainline kernel]
+
+Two issues when the camera_kt SMMU code runs on a mainline (linux-yocto)
+kernel instead of the downstream vendor kernel:
+
+1. cam_populate_smmu_context_banks() sets a fault handler on the context
+   bank's domain obtained from iommu_get_domain_for_dev(), which on mainline
+   is the default managed (DMA) domain. iommu_set_fault_handler() rejects a
+   managed domain with WARN_ON(cookie_type != IOMMU_COOKIE_NONE) and returns
+   without installing the handler - so it is already a no-op, it just floods
+   the log with one backtrace per context bank at probe. Only install the
+   handler on an unmanaged domain.
+
+2. cam_smmu_need_force_alloc_cached() validates coherency across cb_num (all
+   allocated context banks) but is reached from cam_mem_mgr_init() on the
+   first cam_req_mgr open, which can happen before every context bank has been
+   populated during boot. An unpopulated bank has a NULL name and the default
+   CAM_SMMU_NO_COHERENCY, so with force_cache_allocs set it fails with
+   "[(null)] Can't force alloc cache with no coherency", mem mgr init fails
+   and the first ICP FW download fails until a later retry. Validate only the
+   populated banks (cb_init_count); all camera banks are dma-coherent so the
+   result is unchanged once every bank is bound.
+
+Signed-off-by: Justinas Grauslis <justinas@8devices.com>
+---
+ camera_kt/drivers/cam_smmu/cam_smmu_api.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/camera_kt/drivers/cam_smmu/cam_smmu_api.c b/camera_kt/drivers/cam_smmu/cam_smmu_api.c
+--- a/camera_kt/drivers/cam_smmu/cam_smmu_api.c
++++ b/camera_kt/drivers/cam_smmu/cam_smmu_api.c
+@@ -389,7 +389,7 @@
+ 	 * This helps as a validation check to make sure a valid DT combination
+ 	 * is set for a given chipset.
+ 	 */
+-	for (idx = 0; idx < iommu_cb_set.cb_num; idx++) {
++	for (idx = 0; idx < iommu_cb_set.cb_init_count; idx++) {
+ 		/* ignore secure cb for now. need to revisit */
+ 		if (iommu_cb_set.cb_info[idx].is_secure)
+ 			continue;
+@@ -4013,7 +4013,8 @@
+ 		rc= PTR_ERR(cb->domain);
+ 		goto cb_init_fail;
+ 	}
+-	if (cb->io_support && cb->domain)
++	if (cb->io_support && cb->domain &&
++		cb->domain->type == IOMMU_DOMAIN_UNMANAGED)
+ 		iommu_set_fault_handler(cb->domain,
+ 			cam_smmu_iommu_fault_handler,
+ 			(void *)cb->name[0]);

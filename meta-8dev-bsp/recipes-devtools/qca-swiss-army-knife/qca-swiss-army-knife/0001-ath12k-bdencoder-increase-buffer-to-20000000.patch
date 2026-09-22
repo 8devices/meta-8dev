@@ -3,6 +3,12 @@ From: Justinas Grauslis <justinas@8devices.com>
 Date: Thu, 4 Jun 2026 10:43:25 +0300
 Subject: [PATCH] ath12k bdencoder increase buffer to 20000000
 
+The default 2 MB scratch buffer is too small for the board-2.bin files
+used on our ath12k radios; bump it 10x so bdencoder can pack/unpack them.
+
+Upstream-Status: Pending
+
+Signed-off-by: Justinas Grauslis <justinas@8devices.com>
 ---
  tools/scripts/ath12k/ath12k-bdencoder | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

@@ -11,14 +11,14 @@ SRC_URI = "\
     file://boardinfo.sh \
 "
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
 do_install() {
-    install -D -m 0755 ${WORKDIR}/board-init.sh \
+    install -D -m 0755 ${UNPACKDIR}/board-init.sh \
         ${D}${sbindir}/board-init
-    install -D -m 0644 ${WORKDIR}/board-init.service \
+    install -D -m 0644 ${UNPACKDIR}/board-init.service \
         ${D}${systemd_system_unitdir}/board-init.service
-    install -D -m 0755 ${WORKDIR}/boardinfo.sh \
+    install -D -m 0755 ${UNPACKDIR}/boardinfo.sh \
         ${D}${bindir}/boardinfo
 }
 
@@ -26,5 +26,5 @@ SYSTEMD_SERVICE:${PN} = "board-init.service"
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
 
 FILES:${PN} += "\
-    ${base_libdir}/boardinfo.d \
+    ${nonarch_base_libdir}/boardinfo.d \
 "

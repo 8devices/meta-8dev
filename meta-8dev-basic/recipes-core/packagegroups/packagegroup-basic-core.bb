@@ -13,5 +13,6 @@ RDEPENDS:packagegroup-basic-core = "\
 
 RDEPENDS:packagegroup-network-tools = "\
     iproute2 \
+    iproute2-bridge \
     ethtool \
 "

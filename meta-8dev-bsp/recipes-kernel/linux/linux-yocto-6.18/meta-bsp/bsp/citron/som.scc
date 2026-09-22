@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+define KFEATURE_DESCRIPTION "Citron SoM and carrier hardware"
+define KFEATURE_COMPATIBILITY board
+
+# One kernel serves every Citron carrier, so the union of their hardware is
+# built in; each board's device tree decides what probes.
+include bsp/citron/eeprom.scc
+include bsp/citron/ethernet.scc
+include bsp/citron/qcn9274.scc
+include bsp/citron/panel.scc
+include bsp/citron/sensors.scc
+include bsp/citron/spi-nand.scc
+include bsp/citron/i2c-gpio.scc
+include bsp/citron/pwrkey.scc

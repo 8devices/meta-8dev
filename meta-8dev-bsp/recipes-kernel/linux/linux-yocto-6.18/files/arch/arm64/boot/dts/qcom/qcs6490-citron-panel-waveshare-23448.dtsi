@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Waveshare 23448 8" 1280x800 DSI panel assembly: a DSI-to-DPI bridge board that
+ * sequences the panel and dims its backlight over I2C, plus the dumb DPI panel
+ * behind it. Runs on two of the four DSI0 data lanes.
+ *
+ * power-supply is left to the including overlay: it is the connector's interface
+ * rail, which differs per carrier. The binding requires it; no driver reads it.
+ */
+
+&mdss_dsi {
+	vdda-supply = <&vreg_l6b_1p2>;
+	status = "okay";
+};
+
+&mdss_dsi_phy {
+	vdds-supply = <&vreg_l10c_0p88>;
+	status = "okay";
+};
+
+&mdss_dsi0_out {
+	remote-endpoint = <&ws_bridge_in>;
+	data-lanes = <0 1>;
+};
+
+&i2c14 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	ws_bridge: bridge@45 {
+		compatible = "waveshare,dsi2dpi";
+		reg = <0x45>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&disp0_ctrl_state>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				ws_bridge_in: endpoint {
+					data-lanes = <1 2>;
+					remote-endpoint = <&mdss_dsi0_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				ws_bridge_out: endpoint {
+					remote-endpoint = <&ws_panel_in>;
+				};
+			};
+		};
+	};
+};
+
+&{/} {
+	ws_panel: panel {
+		compatible = "waveshare,23448", "panel-dpi";
+		width-mm = <171>;
+		height-mm = <107>;
+
+		panel-timing {
+			clock-frequency = <83333000>;
+			hactive = <1280>;
+			hfront-porch = <156>;
+			hsync-len = <20>;
+			hback-porch = <40>;
+			vactive = <800>;
+			vfront-porch = <40>;
+			vsync-len = <48>;
+			vback-porch = <40>;
+			hsync-active = <0>;
+			vsync-active = <0>;
+			de-active = <1>;
+			pixelclk-active = <1>;
+		};
+
+		port {
+			ws_panel_in: endpoint {
+				remote-endpoint = <&ws_bridge_out>;
+			};
+		};
+	};
+};

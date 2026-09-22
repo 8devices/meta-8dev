@@ -3,8 +3,6 @@ Name=br0
 Kind=bridge
 
 [Bridge]
-# STP guards against loops if two ports ever reach the same L2 segment (e.g.
-# two eth* uplinks, or a bridged AP looping back). Cost: ~30 s of forward-delay
-# before br0 passes traffic (so DHCP is delayed). If every port is guaranteed to
-# be on a distinct segment, set STP=false here to remove that delay.
+# Guards against a loop if two ports ever reach the same L2 segment. Costs ~30 s
+# of forward-delay before br0 passes traffic; set false if that cannot happen.
 STP=true

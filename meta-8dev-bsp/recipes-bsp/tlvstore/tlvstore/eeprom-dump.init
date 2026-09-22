@@ -16,7 +16,6 @@
 
 [ -x "/usr/bin/eeprom-dump" ] || exit 0
 
-# Attempt to remount root if it's read-only
 mount | grep -w / | grep -wq rw || remount=1
 [ -z "$remount" ] || mount -n -o remount,rw /
 /usr/bin/eeprom-dump

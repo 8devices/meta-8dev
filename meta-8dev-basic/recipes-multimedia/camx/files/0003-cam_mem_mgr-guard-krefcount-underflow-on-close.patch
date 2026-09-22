@@ -1,0 +1,54 @@
+From: Justinas Grauslis <justinas@8devices.com>
+Subject: [PATCH] cam_mem_mgr: guard krefcount put against underflow on abnormal close
+
+On cam-server abnormal exit the v4l2 fd release runs cam_req_mgr_close ->
+cam_mem_mgr_deinit -> cam_mem_mgr_close(), which calls __cam_mem_mgr_release()
+for every still-active buffer and kref_put()s its krefcount.
+
+cam_mem_put_cpu_buf() releases the kernel-side krefcount with the no-op
+cam_mem_util_unmap_dummy release. When that drops krefcount to 0 while
+userspace still holds the buffer (urefcount > 0) it cannot unmap, hits the
+"Unbalanced release" case and leaves the buffer active with krefcount == 0.
+cam_mem_mgr_close() then puts that krefcount a second time.
+
+On the downstream vendor kernel the extra put wrapped silently; on a mainline
+(linux-yocto) kernel refcount_t is strict, so it is a use-after-free:
+
+  refcount_t: underflow; use-after-free.
+  WARNING ... refcount_warn_saturate
+   cam_mem_mgr_deinit [camera_qcm6490]
+   cam_req_mgr_close [camera_qcm6490]
+   v4l2_release -> __fput -> do_exit -> get_signal
+
+It also leaves the mem manager in a bad state so the next camera open fails
+("mem_mgr not initialized" -> ICP FW download failed) until a later retry.
+
+Skip the put when krefcount is already 0. cam_mem_mgr_cleanup_table(), run
+right after cam_mem_mgr_close() in cam_mem_mgr_deinit(), still force-frees any
+buffer left active (unmap + dma_buf_put), so nothing leaks.
+
+Upstream-Status: Inappropriate [adapts downstream camx-dlkm to a mainline kernel]
+
+---
+diff --git a/camera_kt/drivers/cam_req_mgr/cam_mem_mgr.c b/camera_kt/drivers/cam_req_mgr/cam_mem_mgr.c
+index 5e057c1..ece482a 100644
+--- a/camera_kt/drivers/cam_req_mgr/cam_mem_mgr.c
++++ b/camera_kt/drivers/cam_req_mgr/cam_mem_mgr.c
+@@ -1368,6 +1368,17 @@ static int __cam_mem_mgr_release(struct cam_mem_mgr_release_cmd *cmd)
+ 	}
+ 
+ 	CAM_DBG(CAM_MEM, "Releasing hdl = %x, idx = %d", cmd->buf_handle, idx);
++	/*
++	 * A prior unbalanced put (cam_mem_put_cpu_buf) can leave a buffer active with
++	 * krefcount already 0; putting again here underflows refcount_t (UAF) on mainline.
++	 * Skip it - cleanup_table() (next in deinit) still force-frees the buffer.
++	 */
++	if (!kref_read(&tbl.bufq[idx].krefcount)) {
++		CAM_WARN(CAM_MEM,
++			"krefcount already 0 for buf_handle %u idx %d; skip put to avoid underflow",
++			cmd->buf_handle, idx);
++		return -EINVAL;
++	}
+ 	if (kref_put(&tbl.bufq[idx].krefcount, cam_mem_util_unmap_dummy)) {
+ 		CAM_DBG(CAM_MEM,
+ 			"Called unmap from here, buf_handle: %u, idx: %d",

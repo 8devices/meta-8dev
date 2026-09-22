@@ -1,0 +1,334 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Downstream CAMX (Spectra) camera pipeline for the Citron DVK (CAMERA_STACK =
+ * "camx"). Sensor models come from the userspace CAMX library, not DT.
+ *
+ *   conn  sensor  cell  CSIPHY  CCI master     MCLK  RST  STBY  camxlib module
+ *   CSI0  IMX577  0     0       cci0 master 0  64    113  112   cmk_imx577_cam3
+ *   CSI1  OV9282  1     1       cci0 master 1  65    11   27    cmk_ov9282_cam0a
+ *   CSI2  IMX577  8     2       cci1 master 0  66    77   85    cmk_imx577_cam2
+ *   CSI3  IMX477  2     3       cci1 master 1  67    28   29    rpi_imx477_cam3
+ *
+ * cell-index is NOT the CSI port: it must equal the <cameraId> of a chi-cdk module
+ * XML, and CAMX then picks among the modules sharing that id by reading the sensor
+ * ID. The ids above are the ones camxlib ships, so no chi-cdk change is needed.
+ * IMX477 only exists at id 2, which is why CSI3 takes 2 and CSI2 takes 8.
+ *
+ * CSI4 is absent here: only four CCI I2C masters exist for five ports, so its I2C is
+ * on GPIO161/162 and must be bit-banged. CAMX can do that (qcom,cam-i2c-sensor sets
+ * I2C_MASTER), but it is left out until the GPIO161/162 pinmux question is settled.
+ */
+
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/clock/qcom,camcc-sc7280.h>
+#include <dt-bindings/clock/qcom,gcc-sc7280.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interconnect/qcom,sc7280.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+/* cam_cpas vdd-corners need RPMH_REGULATOR_LEVEL_*; an overlay compiles standalone,
+ * so it cannot inherit the include through sc7280.dtsi. */
+#include <dt-bindings/power/qcom,rpmhpd.h>
+
+/* Camera clock controller; disabled on the SOM (qcs6490-citron-som.dtsi). */
+&camcc {
+	status = "okay";
+};
+
+/* Free the camera hardware from the mainline drivers; CAMX owns cci/csiphy/isp. */
+&camss {
+	status = "disabled";
+};
+
+&cci0 {
+	status = "disabled";
+};
+
+&cci1 {
+	status = "disabled";
+};
+
+/*
+ * CAMX offloads to the CDSP and its sensor stack uses the ADSP, both of which the
+ * minimized SOM dtsi disables.
+ */
+&remoteproc_cdsp {
+	firmware-name = "qcom/qcm6490/cdsp.mbn";
+	status = "okay";
+};
+
+&remoteproc_adsp {
+	firmware-name = "qcom/qcm6490/adsp.mbn";
+	status = "okay";
+};
+
+/* Downstream CAMX SoC camera stack. */
+#include "qcs6490-camera.dtsi"
+
+/* CAMX runs its IQ nodes on the GPU. */
+#include "qcs6490-gpu.dtsi"
+
+/*
+ * cam_res_mgr_gpio_request() dereferences this driver's global unconditionally, so
+ * the node must exist or sensor open panics. No shared pins here, so a bare node.
+ */
+&soc {
+	qcom,cam-res-mgr {
+		compatible = "qcom,cam-res-mgr";
+		status = "ok";
+	};
+};
+
+/* MCLK0-3 and RESET2 already match the SoC template; RESET0/1/3 move. */
+&cam_sensor_active_rst0 {
+	mux {
+		pins = "gpio113";
+	};
+
+	config {
+		pins = "gpio113";
+	};
+};
+
+&cam_sensor_suspend_rst0 {
+	mux {
+		pins = "gpio113";
+	};
+
+	config {
+		pins = "gpio113";
+	};
+};
+
+&cam_sensor_active_rst1 {
+	mux {
+		pins = "gpio11";
+	};
+
+	config {
+		pins = "gpio11";
+	};
+};
+
+&cam_sensor_suspend_rst1 {
+	mux {
+		pins = "gpio11";
+	};
+
+	config {
+		pins = "gpio11";
+	};
+};
+
+&cam_sensor_active_rst3 {
+	mux {
+		pins = "gpio28";
+	};
+
+	config {
+		pins = "gpio28";
+	};
+};
+
+&cam_sensor_suspend_rst3 {
+	mux {
+		pins = "gpio28";
+	};
+
+	config {
+		pins = "gpio28";
+	};
+};
+
+/* No module has a standby control; hold every STBY/PDN (active low) high. */
+&tlmm {
+	cam0_pwdn_hog: cam0-pwdn-hog {
+		gpio-hog;
+		gpios = <112 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "CAM0_STBY_N";
+	};
+
+	cam1_pwdn_hog: cam1-pwdn-hog {
+		gpio-hog;
+		gpios = <27 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "CAM1_STBY_N";
+	};
+
+	cam2_pwdn_hog: cam2-pwdn-hog {
+		gpio-hog;
+		gpios = <85 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "CAM2_STBY_N";
+	};
+
+	cam3_pwdn_hog: cam3-pwdn-hog {
+		gpio-hog;
+		gpios = <29 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "CAM3_STBY_N";
+	};
+};
+
+/* ov9282 enables supplies without setting a voltage; pin L8C to 1.8V. */
+&vreg_l8c_1p62 {
+	regulator-min-microvolt = <1800000>;
+	regulator-max-microvolt = <1800000>;
+};
+
+&cam_cci0 {
+	qcom,cam-sensor0 {
+		cell-index = <0>;
+		compatible = "qcom,cam-sensor";
+		csiphy-sd-index = <0>;
+		sensor-position-roll = <0>;
+		sensor-position-pitch = <0>;
+		sensor-position-yaw = <180>;
+
+		/* Without the titan_top GDSC the MCLK branch gate is unpowered (rc -16). */
+		power-domains = <&camcc CAM_CC_TITAN_TOP_GDSC>;
+
+		cam_vio-supply = <&vreg_l19b_1p8>;
+		regulator-names = "cam_vio";
+		rgltr-cntrl-support;
+		rgltr-min-voltage = <1800000>;
+		rgltr-max-voltage = <1800000>;
+		rgltr-load-current = <120000>;
+
+		gpio-no-mux = <0>;
+		pinctrl-names = "cam_default", "cam_suspend";
+		pinctrl-0 = <&cam_sensor_mclk0_active &cam_sensor_active_rst0>;
+		pinctrl-1 = <&cam_sensor_mclk0_suspend &cam_sensor_suspend_rst0>;
+		gpios = <&tlmm 64 0>, <&tlmm 113 0>;
+		gpio-reset = <1>;
+		gpio-req-tbl-num = <0 1>;
+		gpio-req-tbl-flags = <1 0>;
+		gpio-req-tbl-label = "CAMIF_MCLK0", "CAM_RESET0";
+
+		sensor-mode = <0>;
+		cci-master = <0>;
+		clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		clock-names = "cam_clk";
+		clock-cntl-level = "nominal";
+		clock-rates = <24000000>;
+
+		status = "ok";
+	};
+
+	qcom,cam-sensor1 {
+		cell-index = <1>;
+		compatible = "qcom,cam-sensor";
+		csiphy-sd-index = <1>;
+		sensor-position-roll = <0>;
+		sensor-position-pitch = <0>;
+		sensor-position-yaw = <0>;
+
+		power-domains = <&camcc CAM_CC_TITAN_TOP_GDSC>;
+
+		cam_vio-supply = <&vreg_l8c_1p62>;
+		regulator-names = "cam_vio";
+		rgltr-cntrl-support;
+		rgltr-min-voltage = <1800000>;
+		rgltr-max-voltage = <1800000>;
+		rgltr-load-current = <120000>;
+
+		gpio-no-mux = <0>;
+		pinctrl-names = "cam_default", "cam_suspend";
+		pinctrl-0 = <&cam_sensor_mclk1_active &cam_sensor_active_rst1>;
+		pinctrl-1 = <&cam_sensor_mclk1_suspend &cam_sensor_suspend_rst1>;
+		gpios = <&tlmm 65 0>, <&tlmm 11 0>;
+		gpio-reset = <1>;
+		gpio-req-tbl-num = <0 1>;
+		gpio-req-tbl-flags = <1 0>;
+		gpio-req-tbl-label = "CAMIF_MCLK1", "CAM_RESET1";
+
+		sensor-mode = <0>;
+		cci-master = <1>;
+		clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		clock-names = "cam_clk";
+		clock-cntl-level = "nominal";
+		clock-rates = <24000000>;
+
+		status = "ok";
+	};
+};
+
+&cam_cci1 {
+	/* cell-index is a camxlib cameraId, not the CSI port - see the header. */
+	qcom,cam-sensor2 {
+		cell-index = <8>;
+		compatible = "qcom,cam-sensor";
+		csiphy-sd-index = <2>;
+		sensor-position-roll = <0>;
+		sensor-position-pitch = <0>;
+		sensor-position-yaw = <0>;
+
+		power-domains = <&camcc CAM_CC_TITAN_TOP_GDSC>;
+
+		cam_vio-supply = <&vreg_l19b_1p8>;
+		regulator-names = "cam_vio";
+		rgltr-cntrl-support;
+		rgltr-min-voltage = <1800000>;
+		rgltr-max-voltage = <1800000>;
+		rgltr-load-current = <120000>;
+
+		gpio-no-mux = <0>;
+		pinctrl-names = "cam_default", "cam_suspend";
+		pinctrl-0 = <&cam_sensor_mclk2_active &cam_sensor_active_rst2>;
+		pinctrl-1 = <&cam_sensor_mclk2_suspend &cam_sensor_suspend_rst2>;
+		gpios = <&tlmm 66 0>, <&tlmm 77 0>;
+		gpio-reset = <1>;
+		gpio-req-tbl-num = <0 1>;
+		gpio-req-tbl-flags = <1 0>;
+		gpio-req-tbl-label = "CAMIF_MCLK2", "CAM_RESET2";
+
+		sensor-mode = <0>;
+		cci-master = <0>;
+		clocks = <&camcc CAM_CC_MCLK2_CLK>;
+		clock-names = "cam_clk";
+		clock-cntl-level = "nominal";
+		clock-rates = <24000000>;
+
+		status = "ok";
+	};
+
+	/* Likewise. */
+	qcom,cam-sensor3 {
+		cell-index = <2>;
+		compatible = "qcom,cam-sensor";
+		csiphy-sd-index = <3>;
+		sensor-position-roll = <0>;
+		sensor-position-pitch = <0>;
+		sensor-position-yaw = <0>;
+
+		power-domains = <&camcc CAM_CC_TITAN_TOP_GDSC>;
+
+		cam_vio-supply = <&vreg_l8c_1p62>;
+		regulator-names = "cam_vio";
+		rgltr-cntrl-support;
+		rgltr-min-voltage = <1800000>;
+		rgltr-max-voltage = <1800000>;
+		rgltr-load-current = <120000>;
+
+		gpio-no-mux = <0>;
+		pinctrl-names = "cam_default", "cam_suspend";
+		pinctrl-0 = <&cam_sensor_mclk3_active &cam_sensor_active_rst3>;
+		pinctrl-1 = <&cam_sensor_mclk3_suspend &cam_sensor_suspend_rst3>;
+		gpios = <&tlmm 67 0>, <&tlmm 28 0>;
+		gpio-reset = <1>;
+		gpio-req-tbl-num = <0 1>;
+		gpio-req-tbl-flags = <1 0>;
+		gpio-req-tbl-label = "CAMIF_MCLK3", "CAM_RESET3";
+
+		sensor-mode = <0>;
+		cci-master = <1>;
+		clocks = <&camcc CAM_CC_MCLK3_CLK>;
+		clock-names = "cam_clk";
+		clock-cntl-level = "nominal";
+		clock-rates = <24000000>;
+
+		status = "ok";
+	};
+};

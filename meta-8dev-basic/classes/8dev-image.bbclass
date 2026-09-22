@@ -18,8 +18,18 @@ FEATURE_PACKAGES_network-debug = "packagegroup-network-debug"
 #
 FEATURE_PACKAGES_update-tools = "packagegroup-update-tools"
 #
-# - video-streaming     - GStreamer stack for USB (UVC) camera streaming
+# - qnn                 - Qualcomm ML compute stack
 #
-FEATURE_PACKAGES_video-streaming = "packagegroup-video-streaming"
+FEATURE_PACKAGES_qnn = "packagegroup-ai-runtime"
 
-CORE_IMAGE_EXTRA_INSTALL:append = " board-conf radio-conf"
+IMAGE_FEATURES:append = " ${@bb.utils.contains_any('DISTRO_FEATURES', 'camx camss', 'camera', '', d)}"
+IMAGE_FEATURES:append = " ${@bb.utils.contains('DISTRO_FEATURES', 'qnn', 'qnn', '', d)}"
+
+IMAGE_INSTALL:append = " board-conf radio-conf"
+
+# citron boots the UKI from the ESP, so the /boot copy packagegroup-core-boot
+# drags in is dead weight. Leaves /boot as an empty mount point.
+empty_boot () {
+    find ${IMAGE_ROOTFS}/boot -mindepth 1 -delete
+}
+ROOTFS_POSTPROCESS_COMMAND:append:citron = " empty_boot;"

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+# libcdsprpc picks the CDSP skel dir by /proc/device-tree/model, and our models
+# match no stock entry, so point them at the QCM6490 v68 skels.
+machines:
+  8devices Citron SOM Generic Board:
+    DSP_LIBRARY_PATH: qcm6490/Thundercomm/RB3gen2/dsp
+  8devices Robonode Vision:
+    DSP_LIBRARY_PATH: qcm6490/Thundercomm/RB3gen2/dsp
+  8devices Robonode Vision Rev 2.0:
+    DSP_LIBRARY_PATH: qcm6490/Thundercomm/RB3gen2/dsp
+  8devices Citron DVK:
+    DSP_LIBRARY_PATH: qcm6490/Thundercomm/RB3gen2/dsp
+  8devices Citron DVK Rev 2.0:
+    DSP_LIBRARY_PATH: qcm6490/Thundercomm/RB3gen2/dsp

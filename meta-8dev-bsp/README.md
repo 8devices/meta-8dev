@@ -10,11 +10,15 @@ This layer depends on:
 
 	URI: https://git.yoctoproject.org/poky
 	layers: meta, meta-poky
-	branch: scarthgap
+	branch: wrynose
 
 	URI: https://git.openembedded.org/meta-openembedded
 	layers: meta-oe
-	branch: scarthgap
+	branch: wrynose
+
+	URI: https://github.com/qualcomm-linux/meta-qcom.git
+	layers: meta-qcom
+	branch: wrynose
 
 ## Quick Start
 
@@ -22,15 +26,15 @@ This layer depends on:
 
 Following MACHINES are supported:
 
-- tobufi-dvk -- TobuFi module based development kit
-- robonode -- TobuFi module based UAV platform
+- citron -- QCS6490-based Citron SOM; one multi-DTB image for every Citron
+  carrier (Robonode Vision, Citron DVK, bare SOM)
 
 ### Building Image
 
 Start the image by specifying target `MACHINE`:
 
    ```
-   MACHINE="tobufi-dvk" bitbake core-image-base
+   MACHINE="citron" bitbake core-image-base
    ```
 
 ## Support and Contributing

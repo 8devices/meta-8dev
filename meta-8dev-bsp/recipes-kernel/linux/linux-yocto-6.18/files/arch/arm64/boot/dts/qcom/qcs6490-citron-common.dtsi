@@ -1,0 +1,114 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Hardware and SoC enablement common to the Citron carriers, which derive from one
+ * reference design. The SOM dtsi leaves everything off; this is what the carriers
+ * turn on. qcs6490-citron-generic.dts assumes none of it and does not include this.
+ */
+
+/* GENI needs this to program any SE the bootloader left alone, else -EINVAL. */
+&qupv3_id_1 {
+	firmware-name = "qcom/qcs6490/qupv3fw.elf";
+	status = "okay";
+};
+
+&i2c11 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	eeprom@50 {
+		compatible = "atmel,24c256";
+		reg = <0x50>;
+		pagesize = <64>;
+		vcc-supply = <&vreg_l8c_1p62>;
+		wp-gpios = <&tlmm 46 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&eeprom_wc_state>;
+	};
+};
+
+/* Carrier UARTs: uart1 gpio4-7, uart3 12-15, uart4 16-19, uart10 40-43, uart12 48-51. */
+&uart1 {
+	status = "okay";
+};
+
+&uart3 {
+	status = "okay";
+};
+
+&uart4 {
+	status = "okay";
+};
+
+&uart10 {
+	status = "okay";
+};
+
+/* gpio48-51 REQUIRE the matching XBL/TZ release, else gpiochip bringup hangs. */
+&uart12 {
+	status = "okay";
+};
+
+&pcie0 {
+	perst-gpios = <&tlmm 86 GPIO_ACTIVE_LOW>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pcie0_reset_n>, <&pcie0_clkreq_n>;
+
+	/*
+	 * The stock one-endpoint map gives the NICs behind the switch SID 0x1c00 with
+	 * no domain (SMMU TF faults), while per-device 0x1c02 aborts in
+	 * qcom_smmu_write_s2cr(). The switch has no ACS so they share a group anyway:
+	 * collapse every RID onto the known-good 0x1c00.
+	 */
+	iommu-map = <0x0 &apps_smmu 0x1c00 0x1>;
+	iommu-map-mask = <0x0>;
+
+	status = "okay";
+};
+
+/* No Type-C mux here and the SS lanes arrive at a fixed orientation. */
+&usb_1_qmpphy {
+	/delete-property/ orientation-switch;
+};
+
+&usb_2_hsphy {
+	vdda-pll-supply = <&vreg_l10c_0p88>;
+	vdda18-supply = <&vreg_l1c_1p8>;
+	vdda33-supply = <&vreg_l2b_3p072>;
+	status = "okay";
+};
+
+/* Venus HW codec: videocc is off on the SOM, the codec off in sc7280. */
+&videocc {
+	status = "okay";
+};
+
+&venus {
+	status = "okay";
+};
+
+/*
+ * DISP0 (DSI0). The panel comes from the board's *-panel-*.dtso when one is fitted;
+ * dispcc/mdss stay on regardless so the DPU still registers a writeback-only card0,
+ * which the GLES-only ML gst elements need. The pin states only hold RST/BL_EN
+ * de-asserted - the bridge itself sequences the panel over I2C.
+ */
+&dispcc {
+	status = "okay";
+};
+
+&mdss {
+	status = "okay";
+};
+
+/*
+ * There is no Type-C connector here, and the qmpphy aux_bridge would make DP defer
+ * forever, costing the DPU its card0. Done here because overlays cannot delete
+ * base properties.
+ */
+&mdss_dp_out {
+	/delete-property/ remote-endpoint;
+};
+
+&usb_dp_qmpphy_dp_in {
+	/delete-property/ remote-endpoint;
+};

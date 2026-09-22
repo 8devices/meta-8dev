@@ -2,4 +2,6 @@
 define KFEATURE_DESCRIPTION "USB Video Class (UVC) devices support"
 define KFEATURE_COMPATIBILITY all
 
+include cfg/8dev/v4l2.scc
+
 kconf non-hardware uvc-camera.cfg
