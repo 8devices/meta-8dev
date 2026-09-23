@@ -9,7 +9,6 @@ KERNEL_FEATURES:append:tobufi = "\
     cfg/fs/vfat.scc \
     cfg/8dev/systemd.scc \
     cfg/8dev/squashfs.scc \
-    cfg/8dev/binfmt-misc.scc \
 "
 
 # Prevent upstream features/netfilter/netfilter.scc from being included

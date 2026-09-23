@@ -13,10 +13,6 @@ PACKAGECONFIG:remove:8dev-basic = "userdb"
 #   machined/nss-mymachines (containers), backlight, vconsole (no VT), hibernate,
 #   quotacheck, localed, rfkill (Ethernet-only), polkit (root-only),
 #   (debug; drop for production).
-#
-# binfmt stays: systemd-binfmt is what registers an interpreter for a format
-# the kernel cannot dispatch on its own, and :remove cannot be undone from a
-# layer above this one.
 PACKAGECONFIG:remove:8dev-basic = "\
     machined nss-mymachines backlight vconsole hibernate \
     quotacheck localed rfkill polkit \
