@@ -26,5 +26,12 @@ include bsp/tobufi/som.scc
 include bsp/tobufi/gpio-fan.scc
 include cfg/8dev/gpio.scc
 
+# --- Features ---
+include cfg/fs/ext4.scc
+include cfg/fs/vfat.scc
+include cfg/8dev/squashfs.scc
+include cfg/8dev/systemd.scc
+include cgl/features/pstore/pstore.scc
+
 # --- Patches ---
 include bsp/tobufi/tobufi-patches.scc
