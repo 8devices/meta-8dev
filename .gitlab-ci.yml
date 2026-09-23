@@ -26,8 +26,8 @@ deploy-to-github:
     - ssh-keyscan github.com >> ~/.ssh/known_hosts
   script:
     - git remote add github git@github.com:8devices/meta-8dev.git || true
-    - git push github origin/$CI_DEFAULT_BRANCH:refs/heads/$CI_DEFAULT_BRANCH
+    - git push github "$CI_COMMIT_SHA:refs/heads/$CI_COMMIT_BRANCH"
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH =~ /^(scarthgap|wrynose)$/
       when: manual
       allow_failure: true
