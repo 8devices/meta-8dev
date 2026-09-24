@@ -1,0 +1,201 @@
+From 0954bf33f633819e74c6870bee727b16ca1421da Mon Sep 17 00:00:00 2001
+From: Philippe Reynes <philippe.reynes@softathome.com>
+Date: Tue, 28 Jul 2026 19:02:49 +0200
+Subject: [PATCH] add a property install-if-hash-different
+
+When the property install-if-hash-different is true,
+swupdate checks if the destination already contains
+the expected data by checking the hash before writting.
+
+For the moment, only raw images are supported.
+
+Signed-off-by: Philippe Reynes <philippe.reynes@softathome.com>
+---
+ doc/source/sw-description.rst |  5 ++
+ include/swupdate_image.h      |  1 +
+ include/util.h                |  2 +
+ parser/parse_external.c       |  2 +
+ parser/parser.c               | 92 +++++++++++++++++++++++++++++++++++
+ 5 files changed, 102 insertions(+)
+
+diff --git a/doc/source/sw-description.rst b/doc/source/sw-description.rst
+index df2cb258..91bb8dc3 100644
+--- a/doc/source/sw-description.rst
++++ b/doc/source/sw-description.rst
+@@ -1458,6 +1458,11 @@ There are 4 main sections inside sw-description:
+    |             |          |            | compared with the entries in          |
+    |             |          |            | sw-versions                           |
+    +-------------+----------+------------+---------------------------------------+
++   | install-if\ | bool     | images     | flag                                  |
++   | -hash-\     |          | (raw only) | if set, the hash of the image on the  |
++   | different   |          |            | board is compared with the hash in    |
++   |             |          |            | sw-description                        |
++   +-------------+----------+------------+---------------------------------------+
+    | encrypted   | bool     | images     | flag                                  |
+    |             |          | files      | if set, file is encrypted             |
+    |             |          | scripts    | and must be decrypted before          |
+diff --git a/include/swupdate_image.h b/include/swupdate_image.h
+index 26ace794..78dc00f2 100644
+--- a/include/swupdate_image.h
++++ b/include/swupdate_image.h
+@@ -58,6 +58,7 @@ struct img_type {
+ 	bool is_encrypted;
+ 	char ivt_ascii[33];
+ 	bool install_directly;
++	bool install_if_hash_different;
+ 	int is_script;
+ 	int is_partitioner;
+ 	struct dict properties;
+diff --git a/include/util.h b/include/util.h
+index 07c20770..3fe3b705 100644
+--- a/include/util.h
++++ b/include/util.h
+@@ -82,6 +82,8 @@ struct swupdate_copy {
+ 	unsigned long long seek;
+ 	/* skip callback: only verify input */
+ 	int skip_file;
++	/* Check if the output has already the expected data */
++	int check_hash;
+ 	/* decompression to use */
+ 	enum compression_type compressed;
+ 	/* cpio crc checksum */
+diff --git a/parser/parse_external.c b/parser/parse_external.c
+index 20ac0771..293b3cc3 100644
+--- a/parser/parse_external.c
++++ b/parser/parse_external.c
+@@ -102,6 +102,8 @@ static void sw_append_stream(struct img_type *img, const char *key,
+ 		img->id.install_if_different = 1;
+ 	if (!strcmp(key, "install-if-higher"))
+ 		img->id.install_if_higher = 1;
++	if (!strcmp(key, "install-if-hash-different"))
++		img->install_if_hash_different = 1;
+ }
+ 
+ int parse_external(struct swupdate_cfg *software, const char *filename,
+diff --git a/parser/parser.c b/parser/parser.c
+index a8f4a691..85ddb747 100644
+--- a/parser/parser.c
++++ b/parser/parser.c
+@@ -24,6 +24,7 @@
+ #include "parselib.h"
+ #include "parsers.h"
+ #include "swupdate_dict.h"
++#include "sslapi.h"
+ #include "lua_util.h"
+ 
+ #define MODULE_NAME	"PARSER"
+@@ -378,6 +379,93 @@ static int is_image_higher(struct swver *sw_ver_list,
+     return false;
+ }
+ 
++static int is_image_with_same_hash(struct img_type *img)
++{
++	int fdout;
++	void *dgst;	/* use a private context for HASH */
++	uint8_t buffer[16384];
++	ssize_t len;
++	long long nbytes;
++	int ret = 0;
++	/*
++	 * SHA256_HASH_LENGTH should be enough but openssl might write
++	 * up to EVP_MAX_MD_SIZE = 64 bytes (sha512 size)
++	 */
++	unsigned char md_value[64];
++	unsigned int md_len = 0;
++
++	if (!img->install_if_hash_different)
++		return 0;
++
++	/* Rigth now, we only manage type raw */
++	if (strncmp(img->type, "raw", strlen("raw"))) {
++		WARN("install-if-hash-different is set but type %s not supported yet", img->type);
++		return 0;
++	}
++
++	if (!img->size) {
++		WARN("install-if-hash-different is set but size is zero");
++		return 0;
++	}
++
++	if (!IsValidHash(img->sha256)) {
++		WARN("install-if-hash-different is set but hash is zero");
++		return 0;
++	}
++
++	fdout = open(img->device, O_RDONLY);
++	if (fdout < 0)
++		return 0;
++
++	if (lseek(fdout, img->seek, SEEK_SET) < 0) {
++		ERROR("lseek has failed");
++		goto out;
++	}
++
++	dgst = swupdate_HASH_init(SHA_DEFAULT);
++	if (!dgst) {
++		ERROR("Cannot initialize the hash");
++		goto out;
++	}
++
++	nbytes = img->size;
++
++	while (nbytes > 0) {
++		size_t count = sizeof(buffer) < nbytes ? sizeof(buffer) : nbytes;
++		len = read(fdout, buffer, count);
++		if (len < 0) {
++			if (errno == EINTR) {
++				continue;
++			}
++
++			ERROR("Failure in stream %d: %s", fdout, strerror(errno));
++			goto out;
++		}
++		if (swupdate_HASH_update(dgst, buffer, len) < 0) {
++			ERROR("Cannot update the hash");
++			goto out;
++		}
++
++		nbytes -= len;
++	}
++
++	if (swupdate_HASH_final(dgst, md_value, &md_len) < 0) {
++		ERROR("Cannot compute final hash");
++		goto out;
++	}
++
++	if (md_len != SHA256_HASH_LENGTH || swupdate_HASH_compare(img->sha256, md_value))
++		goto out;
++
++	TRACE("Found image %s on the device with the same hash => skipping", img->fname);
++	ret = 1;
++
++out:
++	close(fdout);
++
++	return ret;
++}
++
+ static void set_img_globals(struct img_type *img, struct swupdate_cfg *sw)
+ {
+ 	img->bootloader = &sw->bootloader;
+@@ -456,6 +544,7 @@ static int parse_common_attributes(parsertype p, void *elem, struct img_type *im
+ 	GET_FIELD_BOOL(p, elem, "preserve-attributes", &image->preserve_attributes);
+ 	GET_FIELD_BOOL(p, elem, "install-if-different", &image->id.install_if_different);
+ 	GET_FIELD_BOOL(p, elem, "install-if-higher", &image->id.install_if_higher);
++	GET_FIELD_BOOL(p, elem, "install-if-hash-different", &image->install_if_hash_different);
+ 	GET_FIELD_BOOL(p, elem, "encrypted", &image->is_encrypted);
+ 	GET_FIELD_STRING(p, elem, "ivt", image->ivt_ascii);
+ 
+@@ -467,6 +556,9 @@ static int parse_common_attributes(parsertype p, void *elem, struct img_type *im
+ 		image->skip = SKIP_NONE;
+ 	}
+ 
++	if (is_image_with_same_hash(image))
++		image->skip = SKIP_SAME;
++
+ 	return 0;
+ }
+ 
+-- 
+2.51.0
+

@@ -69,22 +69,13 @@ CONFIG_UPDATE_STATE_BOOTLOADER="ustate"
 #
 # Security
 #
-CONFIG_SSL_IMPL_NONE=y
-# CONFIG_SSL_IMPL_OPENSSL is not set
+#CONFIG_SSL_IMPL_NONE is not set
+CONFIG_SSL_IMPL_OPENSSL=y
 # CONFIG_SSL_IMPL_WOLFSSL is not set
 # CONFIG_SSL_IMPL_MBEDTLS is not set
-
-#
-# Hash checking needs an SSL implementation
-#
-
-#
-# Image signature verification needs an SSL implementation
-#
-
-#
-# Image encryption needs an SSL implementation
-#
+CONFIG_HASH_VERIFY=y
+# CONFIG_SIGNED_IMAGES is not set
+# CONFIG_ENCRYPTED_IMAGES is not set
 
 #
 # Compressors (zlib always on)
