@@ -4,6 +4,10 @@ FILESEXTRAPATHS:prepend:citron := "${THISDIR}/files:"
 PACKAGECONFIG_CONFARGS:tobufi = ""
 PACKAGECONFIG_CONFARGS:citron = ""
 
+SRC_URI:append = "\
+    file://0001-add-a-property-install-if-hash-different.patch \
+"
+
 SRC_URI:append:tobufi = "\
     file://swupdate.cfg \
     file://09-swupdate-args \
