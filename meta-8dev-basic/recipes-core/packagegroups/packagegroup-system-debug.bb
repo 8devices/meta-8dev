@@ -7,4 +7,5 @@ inherit packagegroup
 
 RDEPENDS:${PN} = "\
     strace \
+    ${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'systemd-analyze', '', d)} \
 "
