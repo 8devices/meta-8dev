@@ -13,6 +13,7 @@ SRC_URI:append:tobufi = "\
     file://09-swupdate-args \
     file://swinfo.sh \
     file://update.sh \
+    file://swchange.sh \
 "
 
 SRC_URI:append:citron = "\
@@ -20,6 +21,7 @@ SRC_URI:append:citron = "\
     file://09-swupdate-args \
     file://swinfo.sh \
     file://update.sh \
+    file://swchange.sh \
 "
 
 do_install:append:tobufi() {
@@ -32,6 +34,7 @@ do_install:append:tobufi() {
     install -d ${D}${bindir}
     install -m 755 ${WORKDIR}/swinfo.sh ${D}${bindir}/swinfo
     install -m 755 ${WORKDIR}/update.sh ${D}${bindir}/update
+    install -m 755 ${WORKDIR}/swchange.sh ${D}${bindir}/swchange
 }
 
 do_install:append:citron() {
@@ -44,7 +47,8 @@ do_install:append:citron() {
     install -d ${D}${bindir}
     install -m 755 ${WORKDIR}/swinfo.sh ${D}${bindir}/swinfo
     install -m 755 ${WORKDIR}/update.sh ${D}${bindir}/update
+    install -m 755 ${WORKDIR}/swchange.sh ${D}${bindir}/swchange
 }
 
-RDEPENDS:${PN}:append:tobufi = " swupdate-client swupdate-progress"
-RDEPENDS:${PN}:append:citron = " swupdate-client swupdate-progress"
+RDEPENDS:${PN}:append:tobufi = " swupdate-client swupdate-progress qbootctl"
+RDEPENDS:${PN}:append:citron = " swupdate-client swupdate-progress qbootctl"
