@@ -14,6 +14,7 @@ SRC_URI:append:tobufi = "\
     file://swinfo.sh \
     file://update.sh \
     file://swchange.sh \
+    file://sgdisk.sh \
 "
 
 SRC_URI:append:citron = "\
@@ -26,7 +27,8 @@ SRC_URI:append:citron = "\
 
 do_install:append:tobufi() {
     install -m 0644 ${WORKDIR}/09-swupdate-args ${D}${libdir}/swupdate/conf.d/
-    sed -i "s#@MACHINE@#${MACHINE}#g" ${D}${libdir}/swupdate/conf.d/09-swupdate-args
+    sed -i -e "s#@MACHINE@#${MACHINE}#g" -e "s#@LIBDIR@#${libdir}#g" ${D}${libdir}/swupdate/conf.d/09-swupdate-args
+    install -D -m 755 ${WORKDIR}/sgdisk.sh ${D}${libdir}/swupdate/compat/sgdisk
 
     install -d ${D}${sysconfdir}
     install -m 644 ${WORKDIR}/swupdate.cfg ${D}${sysconfdir}

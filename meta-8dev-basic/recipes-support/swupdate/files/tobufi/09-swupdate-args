@@ -7,3 +7,7 @@ else
 fi
 
 SWUPDATE_ARGS="-H @MACHINE@:0.0 -e ${selection} -f /etc/swupdate.cfg"
+
+# Older SWUs call sgdisk to switch slots; its stand-in goes last on the PATH
+# so a real sgdisk still wins.
+PATH="$PATH:@LIBDIR@/swupdate/compat"
