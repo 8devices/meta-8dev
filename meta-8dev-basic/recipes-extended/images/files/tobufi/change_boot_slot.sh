@@ -2,6 +2,14 @@
 
 set -e
 
+# Runs on the image being updated from, whose qbootctl may fail to switch or
+# misreport the slot here; the sgdisk path below reads the slot itself.
+case "$(qbootctl -c)" in
+*_a) qbootctl -s b && exit 0 ;;
+*_b) qbootctl -s a && exit 0 ;;
+esac
+echo "qbootctl could not switch slots, falling back to sgdisk"
+
 dual_boot_parts=$(ls -1 /dev/disk/by-partlabel | grep _a  | sed 's/_.*//')
 active_slot=$(grep -o "SLOT_SUFFIX=_[ab]" /proc/cmdline  | cut -d '=' -f2)
 
