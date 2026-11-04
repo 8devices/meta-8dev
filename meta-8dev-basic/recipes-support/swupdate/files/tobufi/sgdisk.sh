@@ -1,7 +1,13 @@
 #!/bin/sh
-# SWUs from before the qbootctl slot switch flip slots with sgdisk: mark the
-# request for update to finish with qbootctl. Outside update nobody would
-# finish it, so fail like a missing sgdisk.
+# Older SWUs switch slots with sgdisk, once per A/B partition: switch with
+# qbootctl instead, whose -c reads the booted slot from the cmdline, so every
+# call picks the same slot. Only under swupdate, which sets SWUPDATE_INFO_FD
+# for its scripts; elsewhere fail like a missing sgdisk.
 
-[ -f /run/update-slot-request ] || { echo "sgdisk: not installed" >&2; exit 127; }
-echo 1 > /run/update-slot-request
+[ -n "$SWUPDATE_INFO_FD" ] || { echo "sgdisk: not installed" >&2; exit 127; }
+
+case "$(qbootctl -c)" in
+*_a) exec qbootctl -s b ;;
+*_b) exec qbootctl -s a ;;
+*) echo "sgdisk: cannot determine current slot" >&2; exit 1 ;;
+esac
